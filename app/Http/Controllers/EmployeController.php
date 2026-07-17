@@ -15,58 +15,65 @@ class EmployeController extends Controller
      * [GÉRANT] Employés actifs + invitations en attente.
      */
     public function index(Entreprise $entreprise)
-    {
-        $this->authorize('gererEmployes', $entreprise);
+{
+    $this->authorize('gererEmployes', $entreprise);
 
-        $employes = $entreprise->employes()
-            ->select('users.id', 'users.name', 'users.email')
-            ->get();
+    $employes = $entreprise->employes()->get()->map(fn ($e) => [
+        'id' => $e->id,
+        'name' => $e->name,
+        'email' => $e->email,
+        'poste' => $e->pivot->poste,
+        'actif' => (bool) $e->pivot->actif,
+        'peut_gerer_catalogue' => (bool) $e->pivot->peut_gerer_catalogue,
+    ]);
 
-        $invitationsEnAttente = $entreprise->invitationsEmploye()
-            ->whereNull('acceptee_le')
-            ->where('expire_le', '>', now())
-            ->get();
+    $invitationsEnAttente = $entreprise->invitationsEmploye()
+        ->whereNull('acceptee_le')
+        ->where('expire_le', '>', now())
+        ->get(['id', 'nom', 'email', 'poste', 'peut_gerer_catalogue', 'expire_le', 'created_at']);
 
-        return response()->json([
-            'employes' => $employes,
-            'invitations_en_attente' => $invitationsEnAttente,
-        ]);
-    }
+    return response()->json([
+        'employes' => $employes,
+        'invitations_en_attente' => $invitationsEnAttente,
+    ]);
+}
 
     /**
      * [GÉRANT] Envoyer une invitation par email (plus de création directe de compte).
      */
     public function store(Request $request, Entreprise $entreprise)
-    {
-        $this->authorize('gererEmployes', $entreprise);
+{
+    set_time_limit(60);
 
-        $data = $request->validate([
-            'nom' => ['required', 'string', 'max:255'],
-            'email' => [
-                'required', 'email',
-                'unique:users,email',
-                'unique:invitations_employe,email,NULL,id,entreprise_id,' . $entreprise->id . ',acceptee_le,NULL',
-            ],
-            'poste' => ['nullable', 'string', 'max:255'],
-            'peut_gerer_catalogue' => ['sometimes', 'boolean'],
-        ]);
+    $this->authorize('gererEmployes', $entreprise);
 
-        $invitation = InvitationEmploye::create([
-            'entreprise_id' => $entreprise->id,
-            'email' => $data['email'],
-            'nom' => $data['nom'],
-            'poste' => $data['poste'] ?? null,
-            'peut_gerer_catalogue' => $data['peut_gerer_catalogue'] ?? false,
-            'token' => InvitationEmploye::genererToken(),
-            'invite_par_id' => $request->user()->id,
-            'expire_le' => now()->addDays(7),
-        ]);
+    $data = $request->validate([
+        'nom' => ['required', 'string', 'max:255'],
+        'email' => [
+            'required', 'email',
+            'unique:users,email',
+            'unique:invitations_employe,email,NULL,id,entreprise_id,' . $entreprise->id . ',acceptee_le,NULL',
+        ],
+        'poste' => ['nullable', 'string', 'max:255'],
+        'peut_gerer_catalogue' => ['sometimes', 'boolean'],
+    ]);
 
-        Notification::route('mail', $invitation->email)
-            ->notify(new InvitationEmployeNotification($invitation));
+    $invitation = InvitationEmploye::create([
+        'entreprise_id' => $entreprise->id,
+        'email' => $data['email'],
+        'nom' => $data['nom'],
+        'poste' => $data['poste'] ?? null,
+        'peut_gerer_catalogue' => $data['peut_gerer_catalogue'] ?? false,
+        'token' => InvitationEmploye::genererToken(),
+        'invite_par_id' => $request->user()->id,
+        'expire_le' => now()->addDays(7),
+    ]);
 
-        return response()->json($invitation, 201);
-    }
+    Notification::route('mail', $invitation->email)
+        ->notify(new InvitationEmployeNotification($invitation));
+
+    return response()->json($invitation, 201);
+}
 
     /**
      * [GÉRANT] Annuler une invitation non acceptée.

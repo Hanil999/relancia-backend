@@ -36,7 +36,7 @@ class Entreprise extends Model
     public function employes(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'employe_entreprise')
-            ->withPivot(['poste', 'actif', 'invite_le'])
+            ->withPivot(['poste', 'actif', 'peut_gerer_catalogue', 'invite_le'])
             ->withTimestamps();
     }
 
@@ -45,5 +45,10 @@ class Entreprise extends Model
         return $this->belongsToMany(Client::class, 'client_entreprise')
             ->withPivot(['plateforme_sociale', 'identifiant_social', 'premier_contact_le'])
             ->withTimestamps();
+    }
+
+    public function invitationsEmploye(): HasMany
+    {
+        return $this->hasMany(InvitationEmploye::class);
     }
 }

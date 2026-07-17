@@ -13,37 +13,46 @@ use Illuminate\Validation\Rules\Password;
 class AuthController extends Controller
 {
     public function register(Request $request)
-    {
-        $validator = Validator::make($request->all(), [
-            'name' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'confirmed', Password::min(8)],
-        ]);
+{
+    $validator = Validator::make($request->all(), [
+        'name' => ['required', 'string', 'max:255'],
+        'email' => ['required', 'string', 'email', 'max:255', 'unique:users,email'],
+        'password' => ['required', 'confirmed', Password::min(8)],
+        'entreprise_nom' => ['required', 'string', 'max:255'],
+    ]);
 
-        if ($validator->fails()) {
-            return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
-        }
+    if ($validator->fails()) {
+        return response()->json(['message' => $validator->errors()->first(), 'errors' => $validator->errors()], 422);
+    }
 
+    $user = \DB::transaction(function () use ($request) {
         $user = User::create([
             'name' => $request->name,
             'email' => $request->email,
             'password' => Hash::make($request->password),
         ]);
+        $user->assignRole('gerant');
 
-        // Rôle par défaut pour tout nouvel utilisateur (Sprint 1 : gestion des rôles)
-        $user->assignRole('user');
+        $user->entrepriseGeree()->create([
+            'nom' => $request->entreprise_nom,
+            'actif' => true,
+        ]);
 
-        $token = $user->createToken('auth_token')->plainTextToken;
+        return $user;
+    });
 
-        return response()->json([
-           'user' => [
-    'id' => $user->id,
-    'name' => $user->name,
-    'email' => $user->email,
-    'role' => $user->getRoleNames()->first(),
-],            'token' => $token,
-        ], 201);
-    }
+    $token = $user->createToken('auth_token')->plainTextToken;
+
+    return response()->json([
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => 'gerant',
+        ],
+        'token' => $token,
+    ], 201);
+}
 
     public function login(Request $request)
     {
@@ -86,9 +95,14 @@ public function me(Request $request)
     $user = $request->user();
 
     $peutGererCatalogue = false;
+    $entrepriseId = null;
+    $entrepriseNom = null;
 
     if ($user->hasRole('gerant')) {
         $peutGererCatalogue = true;
+        $entreprise = $user->entrepriseGeree;
+        $entrepriseId = $entreprise?->id;
+        $entrepriseNom = $entreprise?->nom;
     } elseif ($user->hasRole('employe')) {
         $pivotActif = $user->entreprisesEmploye()
             ->wherePivot('actif', true)
@@ -105,6 +119,8 @@ public function me(Request $request)
             'email' => $user->email,
             'role' => $user->getRoleNames()->first(),
             'peut_gerer_catalogue' => $peutGererCatalogue,
+            'entreprise_id' => $entrepriseId,
+            'entreprise_nom' => $entrepriseNom,
         ],
     ]);
 }
