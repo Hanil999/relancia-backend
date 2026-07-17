@@ -36,8 +36,12 @@ class AuthController extends Controller
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
-            'user' => $user->load('roles'),
-            'token' => $token,
+           'user' => [
+    'id' => $user->id,
+    'name' => $user->name,
+    'email' => $user->email,
+    'role' => $user->getRoleNames()->first(),
+],            'token' => $token,
         ], 201);
     }
 
@@ -62,8 +66,12 @@ class AuthController extends Controller
         $token = $user->createToken('auth_token')->plainTextToken;
 
         return response()->json([
-            'user' => $user->load('roles'),
-            'token' => $token,
+           'user' => [
+    'id' => $user->id,
+    'name' => $user->name,
+    'email' => $user->email,
+    'role' => $user->getRoleNames()->first(),
+],            'token' => $token,
         ]);
     }
 
@@ -73,9 +81,31 @@ class AuthController extends Controller
 
         return response()->json(['message' => 'Déconnecté avec succès.']);
     }
+public function me(Request $request)
+{
+    $user = $request->user();
 
-    public function me(Request $request)
-    {
-        return response()->json(['user' => $request->user()->load('roles', 'permissions')]);
+    $peutGererCatalogue = false;
+
+    if ($user->hasRole('gerant')) {
+        $peutGererCatalogue = true;
+    } elseif ($user->hasRole('employe')) {
+        $pivotActif = $user->entreprisesEmploye()
+            ->wherePivot('actif', true)
+            ->first()
+            ?->pivot;
+
+        $peutGererCatalogue = (bool) ($pivotActif?->peut_gerer_catalogue ?? false);
     }
+
+    return response()->json([
+        'user' => [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'role' => $user->getRoleNames()->first(),
+            'peut_gerer_catalogue' => $peutGererCatalogue,
+        ],
+    ]);
+}
 }
