@@ -36,7 +36,7 @@ class Entreprise extends Model
     public function employes(): BelongsToMany
     {
         return $this->belongsToMany(User::class, 'employe_entreprise')
-            ->withPivot(['poste', 'actif', 'peut_gerer_catalogue', 'invite_le'])
+            ->withPivot(['poste', 'actif', 'peut_gerer_catalogue', 'invite_le','retire_le'])
             ->withTimestamps();
     }
 

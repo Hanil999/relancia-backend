@@ -27,19 +27,34 @@ class InvitationController extends Controller
     }
 
     /**
+ * [PUBLIC] L'employé refuse l'invitation.
+ */
+public function decline(string $token)
+{
+    $invitation = InvitationEmploye::where('token', $token)->firstOrFail();
+
+    abort_if(! $invitation->estValide(), 410, 'Cette invitation a expiré ou a déjà été utilisée.');
+
+    $invitation->update(['refusee_le' => now()]);
+
+    return response()->json(['message' => 'Invitation refusée.']);
+}
+
+    /**
      * [PUBLIC] Acceptation : l'employé choisit son mot de passe, le compte est créé.
      */
     public function accept(Request $request, string $token)
-    {
-        $invitation = InvitationEmploye::where('token', $token)->firstOrFail();
+{
+    $invitation = InvitationEmploye::where('token', $token)->firstOrFail();
 
-        abort_if(! $invitation->estValide(), 410, 'Cette invitation a expiré ou a déjà été utilisée.');
+    abort_if(! $invitation->estValide(), 410, 'Cette invitation a expiré ou a déjà été utilisée.');
 
-        $data = $request->validate([
-            'nom' => ['sometimes', 'string', 'max:255'],
-            'password' => ['required', 'string', 'min:8', 'confirmed'],
-        ]);
+    $data = $request->validate([
+        'nom' => ['sometimes', 'string', 'max:255'],
+        'password' => ['required', 'string', 'min:8', 'confirmed'],
+    ]);
 
+    [$employe, $tokenAuth] = \DB::transaction(function () use ($invitation, $data) {
         $employe = User::create([
             'name' => $data['nom'] ?? $invitation->nom,
             'email' => $invitation->email,
@@ -58,9 +73,11 @@ class InvitationController extends Controller
 
         $tokenAuth = $employe->createToken('api')->plainTextToken;
 
-        return response()->json([
-            'user' => $employe,
-            'token' => $tokenAuth,
-        ], 201);
-    }
-}
+        return [$employe, $tokenAuth];
+    });
+
+    return response()->json([
+        'user' => $employe,
+        'token' => $tokenAuth,
+    ], 201);
+}}

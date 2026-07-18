@@ -62,6 +62,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('entreprises/{entreprise}/invitations')->group(function () {
         Route::delete('/{invitation}', [EmployeController::class, 'annulerInvitation']);
         Route::post('/{invitation}/renvoyer', [EmployeController::class, 'renvoyerInvitation']);
+        Route::post('/invitations/{token}/refuser', [InvitationController::class, 'decline']);
     });
 
     // --- Clients ---
@@ -73,6 +74,8 @@ Route::middleware('auth:sanctum')->group(function () {
         ->middleware('role:admin');
     Route::get('/facturation/abonnement', [FacturationController::class, 'monAbonnement'])
         ->middleware('role:gerant');
+
+        Route::post('/entreprises/{entreprise}/employes/{employe}/restaurer', [EmployeController::class, 'restore']);
 
     // --- Utilisateurs plateforme (vue globale admin, distincte de "gérer mes employés") ---
     Route::middleware('role:admin')->group(function () {

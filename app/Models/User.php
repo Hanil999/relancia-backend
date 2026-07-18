@@ -57,7 +57,7 @@ public function entrepriseGeree(): HasOne
 public function entreprisesEmploye(): BelongsToMany
 {
     return $this->belongsToMany(Entreprise::class, 'employe_entreprise')
-        ->withPivot(['poste', 'actif', 'invite_le'])
+        ->withPivot(['poste', 'actif', 'invite_le', 'peut_gerer_catalogue','retire_le'])
         ->withTimestamps();
 }
 
