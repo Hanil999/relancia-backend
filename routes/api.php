@@ -8,18 +8,21 @@ use App\Http\Controllers\EmployeController;
 use App\Http\Controllers\EntrepriseController;
 use App\Http\Controllers\FacturationController;
 use App\Http\Controllers\InvitationController;
+use App\Http\Controllers\InvitationGerantController;
 use Illuminate\Support\Facades\Route;
 
+/*
+|--------------------------------------------------------------------------
+| Authentification
+|--------------------------------------------------------------------------
+*/
 Route::prefix('auth')->group(function () {
-    // Authentification classique
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
 
-    // Mot de passe oublié / réinitialisation
     Route::post('/forgot-password', [PasswordResetController::class, 'forgotPassword']);
     Route::post('/reset-password', [PasswordResetController::class, 'resetPassword']);
 
-    // OAuth Google / Facebook
     Route::get('/{provider}/redirect', [SocialAuthController::class, 'redirect'])
         ->whereIn('provider', ['google', 'facebook']);
     Route::get('/{provider}/callback', [SocialAuthController::class, 'callback'])
@@ -31,19 +34,44 @@ Route::prefix('auth')->group(function () {
     });
 });
 
-// Invitations employé — publiques, pas d'auth (l'employé n'a pas encore de compte)
+/*
+|--------------------------------------------------------------------------
+| Invitations EMPLOYÉ — publiques, l'employé n'a pas encore de compte
+|--------------------------------------------------------------------------
+*/
 Route::prefix('invitations')->group(function () {
     Route::get('/{token}', [InvitationController::class, 'show']);
     Route::post('/{token}/accepter', [InvitationController::class, 'accept']);
+    Route::post('/{token}/refuser', [InvitationController::class, 'decline']);
 });
 
+/*
+|--------------------------------------------------------------------------
+| Invitations GÉRANT — publiques, chemin distinct pour éviter toute collision
+|--------------------------------------------------------------------------
+*/
+Route::prefix('invitations-gerant')->group(function () {
+    Route::get('/{token}', [InvitationGerantController::class, 'show']);
+    Route::post('/{token}/accepter', [InvitationGerantController::class, 'accept']);
+    Route::post('/{token}/refuser', [InvitationGerantController::class, 'decline']);
+});
+
+/*
+|--------------------------------------------------------------------------
+| Routes authentifiées
+|--------------------------------------------------------------------------
+*/
 Route::middleware('auth:sanctum')->group(function () {
 
-    // --- Entreprises ---
+    // --- Entreprises (admin) ---
     Route::middleware('role:admin')->group(function () {
         Route::get('/entreprises', [EntrepriseController::class, 'index']);
         Route::post('/entreprises', [EntrepriseController::class, 'store']);
-        Route::patch('/entreprises/{entreprise}/toggle-actif', [EntrepriseController::class, 'toggleActive']);
+        Route::get('/entreprises/archivees', [EntrepriseController::class, 'archives']);
+        Route::post('/entreprises/{id}/restaurer', [EntrepriseController::class, 'restore']);
+        Route::post('/entreprises/{entreprise}/suspendre', [EntrepriseController::class, 'suspend']);
+        Route::delete('/entreprises/{entreprise}', [EntrepriseController::class, 'archive']);
+        Route::delete('/invitations-gerant/{invitation}', [EntrepriseController::class, 'cancelInvitation']);
     });
 
     // Accessible admin (concerné) + gérant propriétaire — filtré par la Policy
@@ -57,27 +85,25 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('/{employe}/toggle-actif', [EmployeController::class, 'toggleActive']);
         Route::patch('/{employe}/toggle-catalogue', [EmployeController::class, 'togglePermissionCatalogue']);
         Route::delete('/{employe}', [EmployeController::class, 'destroy']);
+        Route::post('/{employe}/restaurer', [EmployeController::class, 'restore']);
     });
 
     Route::prefix('entreprises/{entreprise}/invitations')->group(function () {
         Route::delete('/{invitation}', [EmployeController::class, 'annulerInvitation']);
         Route::post('/{invitation}/renvoyer', [EmployeController::class, 'renvoyerInvitation']);
-        Route::post('/invitations/{token}/refuser', [InvitationController::class, 'decline']);
     });
 
     // --- Clients ---
     Route::get('/entreprises/{entreprise}/clients', [ClientController::class, 'index']);
     Route::get('/entreprises/{entreprise}/clients/{clientId}', [ClientController::class, 'show']);
 
-    // --- Facturation --- (deux vues distinctes, cf. tableau)
+    // --- Facturation ---
     Route::get('/facturation/plateforme', [FacturationController::class, 'plateforme'])
         ->middleware('role:admin');
     Route::get('/facturation/abonnement', [FacturationController::class, 'monAbonnement'])
         ->middleware('role:gerant');
 
-        Route::post('/entreprises/{entreprise}/employes/{employe}/restaurer', [EmployeController::class, 'restore']);
-
-    // --- Utilisateurs plateforme (vue globale admin, distincte de "gérer mes employés") ---
+    // --- Utilisateurs plateforme (vue globale admin) ---
     Route::middleware('role:admin')->group(function () {
         Route::get('/admin/utilisateurs', function () {
             return response()->json(\App\Models\User::with('roles')->paginate(20));

@@ -2,53 +2,45 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany;
-use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Entreprise extends Model
 {
-    use HasFactory;
+    use SoftDeletes;
 
     protected $fillable = [
-        'gerant_id',
-        'nom',
-        'secteur_activite',
-        'email_contact',
-        'telephone',
-        'logo_path',
-        'actif',
-        'abonnement_expire_le',
+        'gerant_id', 'nom', 'secteur_activite', 'telephone', 'email_contact', 'actif',
     ];
 
     protected $casts = [
         'actif' => 'boolean',
-        'abonnement_expire_le' => 'datetime',
     ];
 
-    public function gerant(): BelongsTo
+    public function gerant()
     {
         return $this->belongsTo(User::class, 'gerant_id');
     }
 
-    public function employes(): BelongsToMany
-    {
-        return $this->belongsToMany(User::class, 'employe_entreprise')
-            ->withPivot(['poste', 'actif', 'peut_gerer_catalogue', 'invite_le','retire_le'])
-            ->withTimestamps();
-    }
+    public function employes()
+{
+    return $this->belongsToMany(User::class, 'employe_entreprise')
+        ->withPivot(['actif', 'retire_le', 'poste', 'peut_gerer_catalogue'])
+        ->withTimestamps();
+}
 
-    public function clients(): BelongsToMany
-    {
-        return $this->belongsToMany(Client::class, 'client_entreprise')
-            ->withPivot(['plateforme_sociale', 'identifiant_social', 'premier_contact_le'])
-            ->withTimestamps();
-    }
+public function invitationsEmploye()
+{
+    return $this->hasMany(InvitationEmploye::class, 'entreprise_id');
+}
 
-    public function invitationsEmploye(): HasMany
+    /** Statut affiché côté front : Actif / Suspendu / Archivé (En attente vient des invitations) */
+    public function getStatutAttribute(): string
     {
-        return $this->hasMany(InvitationEmploye::class);
+        if ($this->trashed()) {
+            return 'Archivé';
+        }
+
+        return $this->actif ? 'Actif' : 'Suspendu';
     }
 }
