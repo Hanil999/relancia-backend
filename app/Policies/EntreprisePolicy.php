@@ -56,4 +56,32 @@ class EntreprisePolicy
             ->wherePivot('actif', true)
             ->exists();
     }
+
+    /**
+ * Voir le catalogue (produits + catégories) : gérant, ou employé actif quel qu'il soit.
+ */
+public function voirCatalogue(User $user, Entreprise $entreprise): bool
+{
+    if ($entreprise->gerant_id === $user->id) {
+        return true;
+    }
+
+    return $entreprise->employes()
+        ->where('users.id', $user->id)
+        ->wherePivot('actif', true)
+        ->exists();
+}
+
+public function gererCatalogue(User $user, Entreprise $entreprise): bool
+{
+    if ($entreprise->gerant_id === $user->id) {
+        return true;
+    }
+
+    return $entreprise->employes()
+        ->where('users.id', $user->id)
+        ->wherePivot('actif', true)
+        ->wherePivot('peut_gerer_catalogue', true)
+        ->exists();
+}
 }

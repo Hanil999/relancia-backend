@@ -12,10 +12,16 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
-    ->withMiddleware(function (Middleware $middleware) {
+    // bootstrap/app.php
+->withMiddleware(function (Middleware $middleware) {
+    // HandleCors doit être global pour intercepter les requêtes preflight OPTIONS,
+    // qui ne correspondent à aucune route définie explicitement.
+    $middleware->append(\Illuminate\Http\Middleware\HandleCors::class);
+
     $middleware->api(prepend: [
         \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
     ]);
+
     $middleware->alias([
         'role' => \Spatie\Permission\Middleware\RoleMiddleware::class,
         'permission' => \Spatie\Permission\Middleware\PermissionMiddleware::class,

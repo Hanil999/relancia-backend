@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Entreprise extends Model
 {
@@ -43,4 +44,14 @@ public function invitationsEmploye()
 
         return $this->actif ? 'Actif' : 'Suspendu';
     }
+
+    public function produits(): HasMany
+{
+    return $this->hasMany(Produit::class);
+}
+
+public function categories(): HasMany
+{
+    return $this->hasMany(Categorie::class);
+}
 }

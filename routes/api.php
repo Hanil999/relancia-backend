@@ -3,12 +3,14 @@
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\SocialAuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\CategorieController;
 use App\Http\Controllers\ClientController;
 use App\Http\Controllers\EmployeController;
 use App\Http\Controllers\EntrepriseController;
 use App\Http\Controllers\FacturationController;
 use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\InvitationGerantController;
+use App\Http\Controllers\ProduitController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -91,6 +93,20 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('entreprises/{entreprise}/invitations')->group(function () {
         Route::delete('/{invitation}', [EmployeController::class, 'annulerInvitation']);
         Route::post('/{invitation}/renvoyer', [EmployeController::class, 'renvoyerInvitation']);
+    });
+
+    // --- Catalogue : produits & catégories (gérant + employés autorisés) ---
+    Route::prefix('entreprises/{entreprise}')->group(function () {
+        Route::get('produits', [ProduitController::class, 'index']);
+        Route::post('produits', [ProduitController::class, 'store']);
+        Route::get('produits/{produit}', [ProduitController::class, 'show']);
+        Route::put('produits/{produit}', [ProduitController::class, 'update']);
+        Route::delete('produits/{produit}', [ProduitController::class, 'destroy']);
+
+        Route::get('categories', [CategorieController::class, 'index']);
+        Route::post('categories', [CategorieController::class, 'store']);
+        Route::put('categories/{categorie}', [CategorieController::class, 'update']);
+        Route::delete('categories/{categorie}', [CategorieController::class, 'destroy']);
     });
 
     // --- Clients ---
