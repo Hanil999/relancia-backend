@@ -104,12 +104,13 @@ public function me(Request $request)
         $entrepriseId = $entreprise?->id;
         $entrepriseNom = $entreprise?->nom;
     } elseif ($user->hasRole('employe')) {
-        $pivotActif = $user->entreprisesEmploye()
+        $entreprise = $user->entreprisesEmploye()
             ->wherePivot('actif', true)
-            ->first()
-            ?->pivot;
+            ->first();
 
-        $peutGererCatalogue = (bool) ($pivotActif?->peut_gerer_catalogue ?? false);
+        $entrepriseId = $entreprise?->id;
+        $entrepriseNom = $entreprise?->nom;
+        $peutGererCatalogue = (bool) ($entreprise?->pivot?->peut_gerer_catalogue ?? false);
     }
 
     return response()->json([
@@ -123,5 +124,4 @@ public function me(Request $request)
             'entreprise_nom' => $entrepriseNom,
         ],
     ]);
-}
-}
+}}
