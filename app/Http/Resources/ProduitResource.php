@@ -17,6 +17,7 @@ class ProduitResource extends JsonResource
             'description' => $this->description,
             'prix' => $this->prix,
             'stock' => $this->stock,
+            'seuil_alerte_stock' => $this->seuil_alerte_stock,
             'sku' => $this->sku,
             'categorie_id' => $this->categorie_id,
             'categorie' => $this->categorie?->nom,

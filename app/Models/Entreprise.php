@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
 class Entreprise extends Model
 {
@@ -54,4 +55,21 @@ public function categories(): HasMany
 {
     return $this->hasMany(Categorie::class);
 }
+public function clients(): BelongsToMany
+{
+    return $this->belongsToMany(
+        Client::class,
+        'client_entreprise',
+        'entreprise_id',
+        'client_id'
+    )
+    ->withPivot([
+        'plateforme_sociale',
+        'identifiant_social',
+        'premier_contact_le',
+    ])
+    ->withTimestamps();
+}
+public function commandes(): HasMany { return $this->hasMany(Commande::class); }
+public function notificationsInternes(): HasMany { return $this->hasMany(NotificationInterne::class); }
 }

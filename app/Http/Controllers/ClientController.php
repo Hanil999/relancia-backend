@@ -2,38 +2,53 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Resources\ClientResource;
+use App\Models\Client;
 use App\Models\Entreprise;
+use App\Services\NotificationService;
 use Illuminate\Http\Request;
 
 class ClientController extends Controller
 {
-    /**
-     * [GÉRANT + EMPLOYÉ] Liste des clients ayant contacté l'entreprise
-     * via les réseaux sociaux.
-     */
-    public function index(Request $request, Entreprise $entreprise)
+    public function __construct(private readonly NotificationService $notifications)
     {
-        $this->authorize('voirClients', $entreprise);
-
-        $clients = $entreprise->clients()
-            ->when($request->query('plateforme'), function ($q, $plateforme) {
-                $q->wherePivot('plateforme_sociale', $plateforme);
-            })
-            ->orderByPivot('premier_contact_le', 'desc')
-            ->paginate(20);
-
-        return response()->json($clients);
     }
 
-    /**
-     * [GÉRANT + EMPLOYÉ] Détail d'un client (historique, coordonnées).
-     */
-    public function show(Entreprise $entreprise, int $clientId)
+    public function index(Request $request, Entreprise $entreprise)
     {
-        $this->authorize('voirClients', $entreprise);
+        $this->authorize('voirCommandes', $entreprise);
 
-        $client = $entreprise->clients()->where('clients.id', $clientId)->firstOrFail();
+        $clients = $entreprise->clients()
+            ->when($request->search, fn ($q, $s) => $q->where('nom', 'like', "%{$s}%"))
+            ->withCount('commandes')
+            ->latest()
+            ->paginate($request->integer('per_page', 20));
 
-        return response()->json($client);
+        return ClientResource::collection($clients);
+    }
+
+    public function store(Request $request, Entreprise $entreprise)
+    {
+        $this->authorize('gererCommandes', $entreprise);
+
+        $data = $request->validate([
+            'nom' => ['required', 'string', 'max:255'],
+            'telephone' => ['nullable', 'string', 'max:30'],
+            'email' => ['nullable', 'email'],
+            'canal_prefere' => ['nullable', 'string', 'max:50'],
+        ]);
+
+        $client = $entreprise->clients()->create($data);
+        $this->notifications->nouveauClient($entreprise, $client);
+
+        return new ClientResource($client);
+    }
+
+    public function show(Entreprise $entreprise, Client $client)
+    {
+        $this->authorize('voirCommandes', $entreprise);
+        abort_unless($entreprise->clients()->whereKey($client->id)->exists(), 404);
+
+        return new ClientResource($client->loadCount('commandes'));
     }
 }

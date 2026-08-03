@@ -12,6 +12,14 @@ use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\InvitationGerantController;
 use App\Http\Controllers\ProduitController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\CommandeController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\FactureController;
+use App\Http\Controllers\MessageParserController;
+use App\Http\Controllers\NotificationInterneController;
+use App\Http\Controllers\PaiementController;
+use App\Http\Controllers\StockController;
+use App\Http\Controllers\SimulationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -33,6 +41,34 @@ Route::prefix('auth')->group(function () {
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('/logout', [AuthController::class, 'logout']);
         Route::get('/me', [AuthController::class, 'me']);
+        Route::apiResource('entreprises.commandes', CommandeController::class)
+    ->only(['index', 'store', 'show', 'update', 'destroy']);
+
+Route::post('entreprises/{entreprise}/commandes/{commandeId}/restaurer', [CommandeController::class, 'restore']);
+
+Route::patch('entreprises/{entreprise}/commandes/{commande}/statut', [CommandeController::class, 'updateStatut']);
+
+Route::post('entreprises/{entreprise}/messages/analyser', [MessageParserController::class, 'analyser']);
+
+Route::post('entreprises/{entreprise}/simulation/messages', [SimulationController::class, 'repondre']);
+
+Route::apiResource('entreprises.clients', ClientController::class)
+    ->only(['index', 'store', 'show']);
+
+Route::get('entreprises/{entreprise}/factures', [FactureController::class, 'index']);
+
+Route::get('entreprises/{entreprise}/factures/{facture}/telecharger', [FactureController::class, 'telecharger']);
+
+Route::post('entreprises/{entreprise}/commandes/{commande}/facture', [FactureController::class, 'generer']);
+
+Route::post('entreprises/{entreprise}/commandes/{commande}/paiements', [PaiementController::class, 'store']);
+
+Route::get('entreprises/{entreprise}/notifications', [NotificationInterneController::class, 'index']);
+Route::patch('entreprises/{entreprise}/notifications/{notification}/lue', [NotificationInterneController::class, 'marquerLue']);
+Route::post('entreprises/{entreprise}/notifications/tout-lire', [NotificationInterneController::class, 'marquerToutesLues']);
+
+Route::get('entreprises/{entreprise}/stats', [DashboardController::class, 'stats']);
+
     });
 });
 
@@ -102,6 +138,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('produits/{produit}', [ProduitController::class, 'show']);
         Route::put('produits/{produit}', [ProduitController::class, 'update']);
         Route::delete('produits/{produit}', [ProduitController::class, 'destroy']);
+
+        Route::post('produits/{produit}/approvisionner', [StockController::class, 'approvisionner']);
 
         Route::get('categories', [CategorieController::class, 'index']);
         Route::post('categories', [CategorieController::class, 'store']);

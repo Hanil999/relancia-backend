@@ -84,4 +84,35 @@ public function gererCatalogue(User $user, Entreprise $entreprise): bool
         ->wherePivot('peut_gerer_catalogue', true)
         ->exists();
 }
+
+/**
+ * Voir les commandes : gérant propriétaire, ou employé actif de l'entreprise.
+ */
+public function voirCommandes(User $user, Entreprise $entreprise): bool
+{
+    if ($entreprise->gerant_id === $user->id) {
+        return true;
+    }
+
+    return $entreprise->employes()
+        ->where('users.id', $user->id)
+        ->wherePivot('actif', true)
+        ->exists();
+}
+
+/**
+ * Gérer les commandes : gérant propriétaire, ou employé actif avec le flag peut_gerer_commandes.
+ */
+public function gererCommandes(User $user, Entreprise $entreprise): bool
+{
+    if ($entreprise->gerant_id === $user->id) {
+        return true;
+    }
+
+    return $entreprise->employes()
+        ->where('users.id', $user->id)
+        ->wherePivot('actif', true)
+        ->wherePivot('peut_gerer_commandes', true)
+        ->exists();
+}
 }
