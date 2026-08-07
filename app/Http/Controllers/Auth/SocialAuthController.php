@@ -23,7 +23,7 @@ class SocialAuthController extends Controller
     {
         $this->ensureProviderIsValid($provider);
 
-        $frontendUrl = rtrim(config('app.frontend_url'), '/') . '/oauth/callback';
+        $frontendUrl = rtrim(config('app.maintenance.frontend_url', 'http://localhost:8081'), '/') . '/oauth/callback';
 
         try {
             $socialUser = Socialite::driver($provider)->stateless()->user();
