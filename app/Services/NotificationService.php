@@ -70,6 +70,19 @@ class NotificationService
         );
     }
 
+    public function messageRecu(Entreprise $entreprise, Client $client, string $texte, string $canal): NotificationInterne
+    {
+        $tronque = mb_strlen($texte) > 80 ? mb_substr($texte, 0, 80) . '…' : $texte;
+
+        return $this->creer(
+            $entreprise->id,
+            NotificationInterne::TYPE_MESSAGE_RECU,
+            "Nouveau message de {$client->nom}",
+            "[$canal] {$tronque}",
+            ['client_id' => $client->id, 'canal' => $canal],
+        );
+    }
+
     private function creer(int $entrepriseId, string $type, string $titre, string $message, array $data = []): NotificationInterne
     {
         $notification = NotificationInterne::create([

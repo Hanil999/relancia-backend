@@ -20,6 +20,8 @@ use App\Http\Controllers\NotificationInterneController;
 use App\Http\Controllers\PaiementController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\SimulationController;
+use App\Http\Controllers\TelegramController;
+use App\Http\Controllers\WhatsAppController;
 
 /*
 |--------------------------------------------------------------------------
@@ -112,6 +114,23 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/invitations-gerant/{invitation}', [EntrepriseController::class, 'cancelInvitation']);
     });
 
+    Route::get('/entreprises/{entreprise}/canaux/telegram', [TelegramController::class, 'show']);
+    Route::post('/entreprises/{entreprise}/canaux/telegram', [TelegramController::class, 'store']);
+    Route::delete('/entreprises/{entreprise}/canaux/telegram', [TelegramController::class, 'destroy']);
+    Route::post('/entreprises/{entreprise}/canaux/telegram/envoyer', [TelegramController::class, 'envoyer']);
+    Route::get('/entreprises/{entreprise}/canaux/telegram/conversations', [TelegramController::class, 'conversations']);
+    Route::get('/entreprises/{entreprise}/canaux/telegram/conversations/{client}/messages', [TelegramController::class, 'messages']);
+    Route::get('/entreprises/{entreprise}/canaux/telegram/produits', [TelegramController::class, 'produits']);
+
+    // === WHATSAPP ROUTES (authenticated) ===
+    Route::get('/entreprises/{entreprise}/canaux/whatsapp', [WhatsAppController::class, 'show']);
+    Route::post('/entreprises/{entreprise}/canaux/whatsapp', [WhatsAppController::class, 'store']);
+    Route::delete('/entreprises/{entreprise}/canaux/whatsapp', [WhatsAppController::class, 'destroy']);
+    Route::post('/entreprises/{entreprise}/canaux/whatsapp/envoyer', [WhatsAppController::class, 'envoyer']);
+    Route::get('/entreprises/{entreprise}/canaux/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
+    Route::get('/entreprises/{entreprise}/canaux/whatsapp/conversations/{client}/messages', [WhatsAppController::class, 'messages']);
+    Route::get('/entreprises/{entreprise}/canaux/whatsapp/produits', [WhatsAppController::class, 'produits']);
+
     // Accessible admin (concerné) + gérant propriétaire — filtré par la Policy
     Route::get('/entreprises/{entreprise}', [EntrepriseController::class, 'show']);
     Route::patch('/entreprises/{entreprise}', [EntrepriseController::class, 'update']);
@@ -164,3 +183,9 @@ Route::middleware('auth:sanctum')->group(function () {
         });
     });
 });
+
+Route::post('/webhooks/telegram/{entreprise}/{secret}', [TelegramController::class, 'webhook']);
+
+// === WHATSAPP WEBHOOKS (PUBLIC, no auth) ===
+Route::get('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::class, 'challenge']);
+Route::post('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::class, 'webhook']);

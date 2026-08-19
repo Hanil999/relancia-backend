@@ -70,6 +70,17 @@ public function clients(): BelongsToMany
     ])
     ->withTimestamps();
 }
+
+public function canaux(): HasMany
+{
+    return $this->hasMany(CanalEntreprise::class);
+}
+
+public function canalTelegram(): ?CanalEntreprise
+{
+    return $this->canaux()->where('type', 'telegram')->first();
+}
+
 public function commandes(): HasMany { return $this->hasMany(Commande::class); }
 public function notificationsInternes(): HasMany { return $this->hasMany(NotificationInterne::class); }
 }

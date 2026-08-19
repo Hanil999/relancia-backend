@@ -8,6 +8,7 @@ return [
 
     'allowed_origins' => [
         'http://localhost:8081',
+        'https://nuptials-tidiness-modular.ngrok-free.dev',
     ],
 
     'allowed_origins_patterns' => [],

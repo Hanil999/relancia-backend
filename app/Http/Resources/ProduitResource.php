@@ -13,7 +13,7 @@ class ProduitResource extends JsonResource
             'id' => $this->id,
             'nom' => $this->nom,
             'image' => $this->image,
-            'image_url' => $this->image ? Storage::disk('public')->url($this->image) : null,
+            'image_url' => $this->image ? $request->getSchemeAndHttpHost() . '/storage/' . $this->image : null,
             'description' => $this->description,
             'prix' => $this->prix,
             'stock' => $this->stock,

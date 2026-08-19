@@ -14,6 +14,7 @@ class NotificationInterne extends Model
     public const TYPE_PAIEMENT_RECU = 'paiement_recu';
     public const TYPE_RUPTURE_STOCK = 'rupture_stock';
     public const TYPE_COMMANDE_ANNULEE = 'commande_annulee';
+    public const TYPE_MESSAGE_RECU = 'message_recu';
 
     protected $fillable = [
         'entreprise_id',

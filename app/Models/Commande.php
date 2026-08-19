@@ -57,11 +57,18 @@ class Commande extends Model
      */
     public static function genererNumero(int $entrepriseId): string
     {
-        $dernier = static::withTrashed()
-            ->where('entreprise_id', $entrepriseId)
-            ->max('id') ?? 0;
+        $prefixe = 'CMD' . str_pad((string) $entrepriseId, 4, '0', STR_PAD_LEFT) . '-';
+        $dernierNumero = static::withTrashed()
+            ->where('numero', 'like', $prefixe . '%')
+            ->max('numero');
 
-        return 'CMD-' . str_pad((string) ($dernier + 1), 6, '0', STR_PAD_LEFT);
+        if ($dernierNumero) {
+            $suivant = (int) substr($dernierNumero, strlen($prefixe)) + 1;
+        } else {
+            $suivant = 1;
+        }
+
+        return $prefixe . str_pad((string) $suivant, 6, '0', STR_PAD_LEFT);
     }
 
     public function getStatutLabelAttribute(): string
