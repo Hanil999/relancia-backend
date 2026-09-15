@@ -199,4 +199,20 @@ class EntrepriseController extends Controller
 
         return response()->json($entreprise);
     }
+
+    /** [GERANT] Modifier les paramètres de paiement (acompte). */
+    public function updateSettings(Request $request, Entreprise $entreprise)
+    {
+        $this->authorize('update', $entreprise);
+
+        $data = $request->validate([
+            'acompte_pct' => ['required', 'integer', 'min:1', 'max:100'],
+        ]);
+
+        $entreprise->update($data);
+
+        return response()->json([
+            'acompte_pct' => $entreprise->acompte_pct,
+        ]);
+    }
 }

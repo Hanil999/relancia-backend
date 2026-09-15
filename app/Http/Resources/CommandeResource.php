@@ -9,6 +9,10 @@ class CommandeResource extends JsonResource
 {
     public function toArray(Request $request): array
     {
+        $montantPaye = (float) $this->paiements->where('statut', 'paye')->sum('montant');
+        $pct = $this->entreprise?->acompte_pct ?? 50;
+        $montantRequis = (float) $this->montant_total * $pct / 100;
+
         return [
             'id' => $this->id,
             'numero' => $this->numero,
@@ -27,11 +31,16 @@ class CommandeResource extends JsonResource
             'produits_resume' => $this->items
                 ->map(fn ($item) => "{$item->quantite}× {$item->produit_nom}")
                 ->join(', '),
-            'montant' => $this->montant_total,
+            'montant' => (float) $this->montant_total,
+            'montant_paye' => $montantPaye,
+            'reste_a_payer' => max(0, (float) $this->montant_total - $montantPaye),
+            'acompte_pct' => $pct,
+            'peut_confirmer' => $montantPaye >= $montantRequis,
             'canal' => $this->canal,
             'statut' => $this->statut,
-            'statut_label' => $this->statut_label, // accesseur déjà défini sur le modèle Commande
+            'statut_label' => $this->statut_label,
             'date' => $this->created_at->format('d/m/Y'),
+            'paiements' => PaiementResource::collection($this->whenLoaded('paiements')),
             'facture' => $this->facture ? [
                 'id' => $this->facture->id,
                 'numero' => $this->facture->numero,

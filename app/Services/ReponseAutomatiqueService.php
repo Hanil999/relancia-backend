@@ -3,22 +3,25 @@
 namespace App\Services;
 
 use App\Models\Client;
+use App\Models\Commande;
 use App\Models\Entreprise;
 use App\Models\Produit;
 use Illuminate\Support\Collection;
 
 /**
- * Moteur de simulation "Messenger" (sans IA ni Facebook réel) : reçoit le texte
- * d'un message client et produit la réponse que l'entreprise enverrait :
+ * Moteur de réponse automatique aux messages clients (Telegram, WhatsApp, …) :
+ * reçoit le texte d'un message client et produit la réponse que l'entreprise
+ * enverrait :
  *   - questions : présentation du catalogue, affichage des prix ;
  *   - commande   : vérification du stock, création + confirmation automatique
  *                  (stock décrémenté, facture générée), notification interne.
  */
-class SimulationService
+class ReponseAutomatiqueService
 {
     public function __construct(
         private readonly CommandeParserService $parser,
         private readonly CommandeService $commandes,
+        private readonly StripeService $stripe,
     ) {
     }
 
@@ -35,7 +38,7 @@ class SimulationService
     public function repondre(Entreprise $entreprise, Client $client, string $message, string $canal = 'Messenger'): array
     {
         $produits = $entreprise->produits()->get();
-        $texte = mb_strtolower($message);
+        $texte = $this->texteNormalise($message);
 
         $base = [
             'client' => ['id' => $client->id, 'nom' => $client->nom],
@@ -44,23 +47,13 @@ class SimulationService
             'ruptures' => [],
         ];
 
-        // Salutations, prix, paiement, livraison → questions
-        if ($this->contient($texte, [
-            'bonjour', 'salut', 'bonsoir', 'hello', 'coucou', 'slt', 'cc',
-            'prix', 'tarif', 'combien', 'coute', 'coût', 'cout', 'cher', 'moins cher',
-            'catalogue', 'menu', 'carte', 'la liste',
-        ])) {
+        // Messages trop courts ou vides → pas de commande
+        if (mb_strlen($texte) < 2) {
             return [...$base, ...$this->traiterQuestion($message, $produits)];
         }
 
-        if ($this->contient($texte, ['paiement', 'payer', 'comment payer', 'virement', 'mobile money', 'mvola', 'airtel money', 'orange money'])) {
-            return [...$base, ...$this->traiterPaiement($client)];
-        }
-
-        if ($this->contient($texte, ['livraison', 'livrer', 'livre', 'délai', 'delai', 'recevoir', 'expedition', 'expédition'])) {
-            return [...$base, ...$this->traiterLivraison($client)];
-        }
-
+        // --- 1. Intentions spécifiques AVANT le filtrage chat ---
+        // (ex: "je n'arrive pas à payer" contient "pas" mais reste une demande de paiement)
         if ($this->contient($texte, ['annuler', 'cancel', 'supprimer', 'effacer'])) {
             return [...$base, ...$this->traiterAnnulation($entreprise, $client)];
         }
@@ -69,27 +62,65 @@ class SimulationService
             return [...$base, ...$this->traiterModification($entreprise, $client, $message, $canal)];
         }
 
-        $analyse = $this->parser->parser($message, $produits);
+        if ($this->contient($texte, ['paiement', 'payer', 'paie', 'virement', 'mobile money', 'mvola', 'airtel money', 'orange money', 'carte bancaire', 'cb', 'stripe', 'paiement en ligne'])) {
+            return [...$base, ...$this->traiterPaiement($client, $canal)];
+        }
 
-        if (! empty($analyse['reconnus'])) {
-            return [...$base, ...$this->traiterCommande($entreprise, $client, $message, $canal, $analyse['reconnus'])];
+        if ($this->contient($texte, ['livraison', 'livrer', 'livre', 'délai', 'delai', 'recevoir', 'expedition', 'expédition'])) {
+            return [...$base, ...$this->traiterLivraison($client)];
+        }
+
+        // --- 2. Chat pur (remerciements, acquiescements, négations, au revoir) ---
+        if ($this->contient($texte, [
+            'merci', 'ok', 'okay', 'super', 'parfait', 'excellent', 'genial', 'bravo',
+            'compris', 'noté', 'note', 'c\'est bon', 'entendu',
+            'oui', 'yes', 'yeah', 'si', 'certes',
+            'jamais', 'rien', 'a bientot', 'au revoir', 'bonne journee', 'bonne soiree', 'a plus',
+            'ah', 'euh', 'hmm', 'haha', 'lol', 'mdr',
+        ])) {
+            // Uniquement si rien d'autre ne ressemble à une commande et que le message est court
+            if (! $this->contientMotCommande($texte) && ! $this->contientCatalogue($texte) && mb_strlen($texte) <= 50) {
+                return [...$base, ...$this->traiterAcquiescement()];
+            }
+        }
+
+        // --- 3. Questions spécifiques ---
+        // Catalogue / produits AVANT les salutations (ex: "Bonjour, voyons les produits")
+        if ($this->contientCatalogue($texte)) {
+            return [...$base, ...$this->traiterQuestion($message, $produits)];
         }
 
         if ($this->contient($texte, [
-            'commande', 'commander', 'commandes',
-            'acheter', 'achete', 'achat',
-            'je veux', 'je voudrais', 'je veux', 'voudrais',
-            'je prends', 'je prend', 'prendre', 'prend',
-            'donner', 'donne', 'donnes', 'donnez',
-            'je choisis', 'je choisi', 'choisir',
-            'j\'aimerais', 'aimerais', 'aimer',
-            'il me faut', 'faut', 'besoin',
-            'offrir', 'offre', 'envoyer',
+            'bonjour', 'bonsoir', 'hello', 'coucou', 'slt', 'cc', 'bienvenue', 'bonne nuit',
         ])) {
+            return [...$base, ...$this->traiterQuestion($message, $produits)];
+        }
+
+        if ($this->contient($texte, ['prix', 'tarif', 'combien', 'coute', 'coût', 'cout', 'cher', 'moins cher'])) {
+            return [...$base, ...$this->traiterQuestion($message, $produits)];
+        }
+
+        // --- 4. Commande : parser SEULEMENT si le message contient un intent de commande ---
+        if ($this->contientMotCommande($texte)) {
+            $analyse = $this->parser->parser($message, $produits);
+
+            if (! empty($analyse['reconnus'])) {
+                return [...$base, ...$this->traiterCommande($entreprise, $client, $message, $canal, $analyse['reconnus'])];
+            }
+
             return [...$base, 'message' => "Je n'ai pas reconnu le produit demandé. Voici notre catalogue :", ...$this->repondreCatalogue($produits)];
         }
 
+        // --- 5. Fallback : question / aide ---
         return [...$base, ...$this->traiterQuestion($message, $produits)];
+    }
+
+    private function traiterAcquiescement(): array
+    {
+        return [
+            'message' => "De rien ! 😊 N'hésitez pas si vous avez besoin d'aide.",
+            'suggestions' => ['Voir les produits', 'Afficher les prix'],
+        ];
     }
 
     /**
@@ -135,12 +166,27 @@ class SimulationService
             $listeProduits = $lignes->implode(', ') . ' et ' . $dernier;
         }
 
-        $texte = "Votre commande de {$listeProduits} est bien enregistree !\n"
-            . 'Montant : ' . number_format((float) $commande->montant_total, 0, ',', ' ') . " Ar\n"
-            . "\nOn va la preparer et vous recontacter pour la livraison. Merci !";
+        $montantTotal = number_format((float) $commande->montant_total, 0, ',', ' ');
+        $pct = $entreprise->acompte_pct ?? 50;
+        $montantAcompte = number_format((float) $commande->montant_total * $pct / 100, 0, ',', ' ');
+        $numeroTelephone = $entreprise->telephone ?: '034XXXXXXXX';
+
+        $texte = "Votre commande de {$listeProduits} est bien enregistrée !\n"
+            . "Montant total : {$montantTotal} Ar\n"
+            . "Acompte demandé : {$montantAcompte} Ar ({$pct}%)\n\n"
+            . "Pour confirmer, payez votre acompte via :\n";
+
+        $lienPaiement = $this->lienPaiementStripe($commande, (float) $commande->montant_total * $pct / 100);
+        $texte .= $this->ligneCarte($lienPaiement, $canal);
+
+        $texte .= "- Mobile Money (MVola / Airtel Money) au {$numeroTelephone}\n"
+            . "- En boutique\n\n"
+            . "Envoyez la preuve de paiement ici ou informez le vendeur.\n"
+            . "Merci !";
 
         return [
             'message' => trim($texte),
+            'lien_paiement' => $lienPaiement,
             'suggestions' => $this->suggestions($entreprise->produits()->get()),
             'commande' => [
                 'numero' => $commande->numero,
@@ -161,15 +207,14 @@ class SimulationService
      */
     private function traiterQuestion(string $message, Collection $produits): array
     {
-        $texte = mb_strtolower($message);
+        $texte = $this->texteNormalise($message);
 
-        if ($this->contient($texte, ['bonjour', 'salut', 'bonsoir', 'hello', 'coucou', 'slt', 'cc'])) {
-            return [
-                'message' => "Bonjour ! 👋 Bienvenue chez nous. Je peux vous montrer nos produits, vous donner les prix ou enregistrer votre commande. Que souhaitez-vous ?",
-                'suggestions' => $this->suggestions($produits),
-            ];
+        // 1. Catalogue / produits (AVANT les salutations : "Bonjour, voir les produits" → catalogue)
+        if ($this->contientCatalogue($texte)) {
+            return $this->repondreCatalogue($produits);
         }
 
+        // 2. Prix
         if ($this->contient($texte, ['prix', 'tarif', 'combien', 'coute', 'coût', 'cout'])) {
             $analyse = $this->parser->parser($message, $produits);
 
@@ -188,14 +233,47 @@ class SimulationService
             return $this->repondrePrix($produits);
         }
 
-        if ($this->contient($texte, ['produit', 'catalogue', 'liste', 'disponible', 'quoi', 'offre', 'stock', 'avoir'])) {
-            return $this->repondreCatalogue($produits);
+        // 3. Salutations
+        if ($this->contient($texte, ['bonjour', 'salut', 'bonsoir', 'hello', 'coucou', 'slt', 'cc', 'bienvenue', 'bonne nuit'])) {
+            return [
+                'message' => "Bonjour ! 👋 Bienvenue chez nous. Je peux vous montrer nos produits, vous donner les prix ou enregistrer votre commande. Que souhaitez-vous ?",
+                'suggestions' => $this->suggestions($produits),
+            ];
         }
 
         return [
             'message' => "Je n'ai pas bien compris votre demande. Voici ce que je peux faire pour vous :",
             'suggestions' => $this->suggestions($produits),
         ];
+    }
+
+    /**
+     * Minuscules et sans accents — pour des correspondances par mots-clés
+     * insensibles aux accents (« achète » ≡ « achete », « journée » ≡ « journee »).
+     */
+    private function texteNormalise(string $message): string
+    {
+        $texte = mb_strtolower(trim($message));
+        $transliterations = [
+            'à' => 'a', 'â' => 'a', 'ä' => 'a', 'é' => 'e', 'è' => 'e', 'ê' => 'e',
+            'ë' => 'e', 'î' => 'i', 'ï' => 'i', 'ô' => 'o', 'ö' => 'o', 'ù' => 'u',
+            'û' => 'u', 'ü' => 'u', 'ç' => 'c',
+        ];
+
+        return strtr($texte, $transliterations);
+    }
+
+    /**
+     * Mots-clés indiquant que le client veut voir le catalogue / les produits.
+     */
+    private function contientCatalogue(string $texte): bool
+    {
+        return $this->contient($texte, [
+            'produit', 'produits', 'catalogue', 'menu', 'la liste', 'liste',
+            'voir les produits', 'voir vos produits', 'montre', 'montre-moi',
+            'montrez', 'montrez-moi', 'disponible', 'quoi', 'offre', 'vend',
+            'vendez', 'magasin', 'stock', 'qu\'est-ce que vous vendez',
+        ]);
     }
 
     /**
@@ -264,6 +342,26 @@ class SimulationService
     }
 
     /**
+     * Vérifie si le message contient des mots indiquant une intention de commande.
+     * Empêche les faux ordres créés à partir de messages comme "merci", "ok", "oui", etc.
+     */
+    private function contientMotCommande(string $texte): bool
+    {
+        return $this->contient($texte, [
+            'commande', 'commander', 'commandes',
+            'acheter', 'achete', 'achetes', 'achat',
+            'je veux', 'je voudrais', 'voudrais', 'voulez',
+            'je prends', 'je prend', 'prendre', 'prend',
+            'donner', 'donne', 'donnes', 'donnez',
+            'je choisis', 'je choisi', 'choisir',
+            'j\'aimerais', 'aimerais', 'aimer',
+            'il me faut', 'faut', 'besoin',
+            'offrir', 'offre', 'envoyer',
+            'pour moi', 'pour nous',
+        ]);
+    }
+
+    /**
      * @param  array<int, string>  $mots
      */
     private function contient(string $texte, array $mots): bool
@@ -287,7 +385,7 @@ class SimulationService
         ];
     }
 
-    private function traiterPaiement(Client $client): array
+    private function traiterPaiement(Client $client, string $canal): array
     {
         $derniereCommande = $client->commandes()->latest()->first();
 
@@ -298,8 +396,8 @@ class SimulationService
             ];
         }
 
-        $montant = number_format((float) $derniereCommande->montant_total, 0, ',', ' ');
         $statut = $derniereCommande->statut_label;
+        $reste = (float) $derniereCommande->reste_a_payer;
 
         if ($derniereCommande->statut === 'livree') {
             return [
@@ -315,10 +413,52 @@ class SimulationService
             ];
         }
 
+        $montant = number_format($reste, 0, ',', ' ');
+        $texte = "Commande {$derniereCommande->numero} — {$statut}\n"
+            . "Reste à payer : {$montant} Ar\n\n"
+            . "Modes de paiement acceptés :\n";
+
+        $lienPaiement = $reste > 0 ? $this->lienPaiementStripe($derniereCommande, $reste) : null;
+        $texte .= $this->ligneCarte($lienPaiement, $canal);
+
+        $texte .= "• Mobile Money (MVola, Airtel Money, Orange Money)\n"
+            . "• Virement bancaire\n"
+            . "• Paiement à la livraison\n\n"
+            . "Un commercial vous contactera pour finaliser.";
+
         return [
-            'message' => "Commande {$derniereCommande->numero} — {$statut}\nMontant à payer : {$montant} Ar\n\nModes de paiement acceptés :\n• Mobile Money (MVola, Airtel Money, Orange Money)\n• Virement bancaire\n• Paiement à la livraison\n\nUn commercial vous contactera pour finaliser.",
+            'message' => $texte,
+            'lien_paiement' => $lienPaiement,
             'suggestions' => ['Voir les produits', 'Suivre ma commande'],
         ];
+    }
+
+    /**
+     * Génère le lien de paiement Stripe si le service est configuré.
+     * Retourne null si Stripe n'est pas disponible.
+     */
+    private function lienPaiementStripe(Commande $commande, float $montant): ?string
+    {
+        try {
+            return $this->stripe->creerSessionCheckout($commande, $montant)['url'];
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Ajoute la ligne « carte bancaire » au texte d'un message.
+     * Sur Telegram et WhatsApp l'URL brute est remplacée par un bouton (champ lien_paiement).
+     */
+    private function ligneCarte(?string $lien, string $canal): string
+    {
+        if (! $lien) {
+            return '';
+        }
+
+        return in_array($canal, ['Telegram', 'WhatsApp'])
+            ? "• 💳 Carte bancaire (en ligne) : touchez le bouton « 💳 Payer par carte » ci-dessous\n"
+            : "• 💳 Carte bancaire (en ligne) : {$lien}\n";
     }
 
     private function traiterLivraison(Client $client): array
@@ -359,7 +499,7 @@ class SimulationService
 
         if (! $commande) {
             return [
-                'message' => "Vous n'avez aucune commande en cours a annuler.",
+                'message' => "Vous n'avez aucune commande en cours à annuler.",
                 'suggestions' => ['Voir les produits', 'Afficher les prix'],
             ];
         }
@@ -369,7 +509,7 @@ class SimulationService
         app(CommandeService::class)->changerStatut($commande, 'annulee');
 
         return [
-            'message' => "Votre commande de {$lignes} a bien ete annulee.\n\nSi vous souhaitez passer une nouvelle commande, dites-moi ce que vous voulez.",
+            'message' => "Votre commande de {$lignes} a bien été annulée.\n\nSi vous souhaitez passer une nouvelle commande, dites-moi ce que vous voulez.",
             'suggestions' => ['Voir les produits', 'Afficher les prix'],
         ];
     }
@@ -390,7 +530,7 @@ class SimulationService
 
             if ($aCommande && in_array($aCommande->statut, ['confirmee', 'expediee', 'livree'])) {
                 return [
-                    'message' => "Votre commande {$aCommande->numero} est deja {$aCommande->statut_label}. Elle ne peut plus etre modifiee.",
+                    'message' => "Votre commande {$aCommande->numero} est déjà {$aCommande->statut_label}. Elle ne peut plus être modifiée.",
                     'suggestions' => ['Voir les produits'],
                 ];
             }
@@ -416,8 +556,8 @@ class SimulationService
 
             if (! empty($ruptures)) {
                 return [
-                    'message' => "Certains produits ne sont pas disponibles en quantite suffisante : "
-                        . implode(', ', $ruptures) . ".\n\nVotre commande actuelle est conservee.",
+                    'message' => "Certains produits ne sont pas disponibles en quantité suffisante : "
+                        . implode(', ', $ruptures) . ".\n\nVotre commande actuelle est conservée.",
                     'suggestions' => ['Voir les produits'],
                     'ruptures' => $ruptures,
                 ];
@@ -441,10 +581,10 @@ class SimulationService
             $nouveauMontant = number_format((float) $nouvelleCommande->montant_total, 0, ',', ' ');
 
             return [
-                'message' => "Votre commande a bien ete modifiee !\n"
-                    . "Ancienne commande ({$ancienMontant} Ar) : annulee.\n"
+                'message' => "Votre commande a bien été modifiée !\n"
+                    . "Ancienne commande ({$ancienMontant} Ar) : annulée.\n"
                     . "Nouvelle commande ({$nouveauMontant} Ar) : {$listeProduits}.\n\n"
-                    . "On va la preparer et vous recontacter pour la livraison. Merci !",
+                    . "On va la préparer et vous recontacter pour la livraison. Merci !",
                 'suggestions' => $this->suggestions($entreprise->produits()->get()),
                 'commande' => [
                     'numero' => $nouvelleCommande->numero,

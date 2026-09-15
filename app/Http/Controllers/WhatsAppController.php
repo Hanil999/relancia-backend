@@ -4,10 +4,13 @@ namespace App\Http\Controllers;
 
 use App\Models\CanalEntreprise;
 use App\Models\Client;
+use App\Models\Commande;
 use App\Models\Entreprise;
 use App\Models\MessageCanal;
 use App\Services\NotificationService;
-use App\Services\SimulationService;
+use App\Services\OcrService;
+use App\Services\PaiementService;
+use App\Services\ReponseAutomatiqueService;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -17,8 +20,10 @@ class WhatsAppController extends Controller
 {
     public function __construct(
         private WhatsAppService $whatsapp,
-        private SimulationService $simulation,
+        private ReponseAutomatiqueService $reponses,
         private NotificationService $notifications,
+        private PaiementService $paiements,
+        private OcrService $ocr,
     ) {}
 
     /** GET /entreprises/{entreprise}/canaux/whatsapp */
@@ -37,6 +42,9 @@ class WhatsAppController extends Controller
             'bot_username' => $canal->bot_username,
             'phone_number_id' => $canal->bot_id,
             'connecte_le' => $canal->connecte_le,
+            'webhook_callback_url' => rtrim(config('app.url'), '/')
+                . "/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
+            'webhook_verify_token' => $canal->webhook_secret,
         ]);
     }
 
@@ -60,9 +68,17 @@ class WhatsAppController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
+        // Abonnement du webhook Meta (sans quoi les messages ne nous parviennent pas)
+        $webhook = $this->whatsapp->abonnerWebhook($canal);
+
         return response()->json([
             'connecte' => true,
             'bot_username' => $canal->bot_username,
+            'webhook_callback_url' => rtrim(config('app.url'), '/')
+                . "/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
+            'webhook_verify_token' => $canal->webhook_secret,
+            'webhook_subscribed' => $webhook['ok'],
+            'webhook_message' => $webhook['message'],
         ], 201);
     }
 
@@ -74,10 +90,30 @@ class WhatsAppController extends Controller
         $canal = $entreprise->canaux()->where('type', 'whatsapp')->first();
 
         if ($canal) {
+            $this->whatsapp->desabonnerWebhook($canal);
             $this->whatsapp->deconnecter($canal);
         }
 
         return response()->json(['connecte' => false]);
+    }
+
+    /** POST /entreprises/{entreprise}/canaux/whatsapp/abonner */
+    public function abonner(Entreprise $entreprise)
+    {
+        $this->authorize('update', $entreprise);
+
+        $canal = $entreprise->canaux()->where('type', 'whatsapp')->where('actif', true)->first();
+
+        if (! $canal) {
+            return response()->json(['message' => 'WhatsApp non connecté'], 404);
+        }
+
+        $webhook = $this->whatsapp->abonnerWebhook($canal);
+
+        return response()->json([
+            'webhook_subscribed' => $webhook['ok'],
+            'webhook_message' => $webhook['message'],
+        ], $webhook['ok'] ? 200 : 422);
     }
 
     /** GET /entreprises/{entreprise}/canaux/whatsapp/conversations */
@@ -290,10 +326,9 @@ class WhatsAppController extends Controller
     private function traiterMessage(CanalEntreprise $canal, int $entrepriseId, array $msg, array $value): void
     {
         $phoneFrom = $msg['from'] ?? null;
-        $texte = $msg['text']['body'] ?? null;
         $type = $msg['type'] ?? null;
 
-        if (! $phoneFrom || $type !== 'text' || ! $texte) {
+        if (! $phoneFrom || ! $type) {
             return;
         }
 
@@ -302,7 +337,6 @@ class WhatsAppController extends Controller
             return;
         }
 
-        // Extract display name from contacts array if available
         $contacts = $value['contacts'] ?? [];
         $nomClient = 'Client WhatsApp';
         if (! empty($contacts[0]['profile']['name'])) {
@@ -321,6 +355,17 @@ class WhatsAppController extends Controller
                 'premier_contact_le' => now(),
             ],
         ]);
+
+        // --- PHOTO (preuve de paiement) ---
+        if ($type === 'image' && ! empty($msg['image']['id'])) {
+            $this->traiterPhotoPreuve($canal, $entreprise, $client, $phoneFrom, $msg);
+            return;
+        }
+
+        $texte = $msg['text']['body'] ?? null;
+        if ($type !== 'text' || ! $texte) {
+            return;
+        }
 
         MessageCanal::create([
             'entreprise_id' => $entreprise->id,
@@ -342,9 +387,14 @@ class WhatsAppController extends Controller
         }
 
         try {
-            $reponse = $this->simulation->repondre($entreprise, $client, $texte, 'WhatsApp');
+            $reponse = $this->reponses->repondre($entreprise, $client, $texte, 'WhatsApp');
 
-            $this->whatsapp->envoyerMessage($canal, $phoneFrom, $reponse['message']);
+            $this->whatsapp->envoyerMessage(
+                $canal,
+                $phoneFrom,
+                $reponse['message'],
+                $reponse['lien_paiement'] ?? null,
+            );
 
             MessageCanal::create([
                 'entreprise_id' => $entreprise->id,
@@ -361,6 +411,163 @@ class WhatsAppController extends Controller
                 'phone' => $phoneFrom,
                 'erreur' => $e->getMessage(),
             ]);
+        }
+    }
+
+    /**
+     * Traite une photo reçue : OCR → recherche commande en_attente → enregistrement paiement auto.
+     */
+    private function traiterPhotoPreuve(
+        CanalEntreprise $canal,
+        Entreprise $entreprise,
+        Client $client,
+        string $phoneFrom,
+        array $msg,
+    ): void {
+        $mediaId = $msg['image']['id'] ?? null;
+
+        // 1. Enregistrer le message photo
+        $msgPhoto = MessageCanal::create([
+            'entreprise_id' => $entreprise->id,
+            'client_id' => $client->id,
+            'canal' => 'WhatsApp',
+            'direction' => 'entrant',
+            'texte' => '[Photo — preuve de paiement]',
+            'conversation_id' => $phoneFrom,
+            'source' => 'manuel',
+        ]);
+
+        // 2. Télécharger la photo via l'API Meta
+        $cheminPhoto = $this->whatsapp->telechargerImage($canal->token, $canal->bot_id, $mediaId);
+
+        if (! $cheminPhoto) {
+            $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, 'Image non reçue. Veuillez réessayer ou envoyer une capture d\'écran plus nette.');
+            return;
+        }
+
+        // Mettre à jour le message avec l'URL de la photo
+        $mediaUrl = url('/storage/' . $cheminPhoto);
+        $msgPhoto->update([
+            'texte' => '[Photo — preuve de paiement]',
+            'media_url' => $mediaUrl,
+            'media_type' => 'image',
+        ]);
+
+        // 3. Trouver la dernière commande en_attente du client pour cette entreprise
+        $derniereCommande = Commande::where('entreprise_id', $entreprise->id)
+            ->where('client_id', $client->id)
+            ->whereIn('statut', ['en_attente'])
+            ->latest()
+            ->first();
+
+        if (! $derniereCommande) {
+            $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, 'Aucune commande en attente de paiement. Si vous souhaitez passer une commande, envoyez votre commande en texte.');
+            return;
+        }
+
+        // 4. OCR — extraire le montant de la photo
+        $uploadedFile = new \Illuminate\Http\UploadedFile(
+            storage_path("app/public/{$cheminPhoto}"),
+            basename($cheminPhoto),
+            mime_content_type(storage_path("app/public/{$cheminPhoto}")),
+            null,
+            true
+        );
+
+        $pct = $entreprise->acompte_pct ?? 50;
+        $montantAttendu = (float) $derniereCommande->montant_total * $pct / 100;
+        $montantTotal = (float) $derniereCommande->montant_total;
+
+        $verification = $this->ocr->verifierMontant($uploadedFile, $montantAttendu);
+
+        Log::info('OCR Photo preuve WhatsApp', [
+            'commande_id' => $derniereCommande->id,
+            'montant_attendu_acompte' => $montantAttendu,
+            'montant_total' => $montantTotal,
+            'texte_ocr' => $verification['texte'] ?? '',
+            'montants_trouves' => $verification['montants_trouves'] ?? [],
+            'match' => $verification['match'] ?? false,
+            'montant_detecte' => $verification['montant_detecte'] ?? null,
+            'chemin_photo' => $cheminPhoto,
+        ]);
+
+        // 5. Vérifier si le montant OCR correspond à l'acompte OU au total
+        $montants = $verification['montants_trouves'] ?? [];
+        $matchAcompte = false;
+        $matchTotal = false;
+
+        foreach ($montants as $m) {
+            if (abs($m - $montantAttendu) < 1) $matchAcompte = true;
+            if (abs($m - $montantTotal) < 1) $matchTotal = true;
+        }
+
+        if (! empty($verification['texte']) && ($matchAcompte || $matchTotal)) {
+            // Montant détecté → enregistrer le paiement
+            $montantAPayer = $matchTotal ? $montantTotal : $montantAttendu;
+
+            $paiement = $this->paiements->enregistrerPaiement(
+                $derniereCommande,
+                $montantAPayer,
+                'mobile_money',
+                'WhatsApp — preuve photo',
+                $uploadedFile,
+                "whatsapp:{$phoneFrom}:{$msg['id']}",
+            );
+
+            $montantFmt = number_format($montantAPayer, 0, ',', ' ');
+            $reste = max(0, $montantTotal - (float) $derniereCommande->fresh()->montant_paye);
+
+            $reponse = "Paiement de {$montantFmt} Ar enregistré pour la commande {$derniereCommande->numero}.";
+            if ($reste > 0) {
+                $resteFmt = number_format($reste, 0, ',', ' ');
+                $reponse .= " Il reste {$resteFmt} Ar à payer.";
+            } else {
+                $reponse .= " Commande intégralement payée !";
+            }
+
+            $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, $reponse);
+        } else {
+            // Montant non reconnu ou ne correspond pas
+            $detecteStr = ! empty($montants)
+                ? 'Montant(s) détecté(s) : ' . implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ') . ' Ar', $montants))
+                : 'Aucun montant détecté sur l\'image.';
+
+            $acompteFmt = number_format($montantAttendu, 0, ',', ' ');
+            $totalFmt = number_format($montantTotal, 0, ',', ' ');
+
+            $this->envoyerReponse(
+                $canal,
+                $phoneFrom,
+                $entreprise,
+                $client,
+                "Impossible de vérifier le montant automatiquement. {$detecteStr}\n"
+                . "Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
+                . "Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence."
+            );
+        }
+    }
+
+    private function envoyerReponse(
+        CanalEntreprise $canal,
+        string $phoneFrom,
+        Entreprise $entreprise,
+        Client $client,
+        string $texte,
+    ): void {
+        try {
+            $this->whatsapp->envoyerMessage($canal, $phoneFrom, $texte);
+
+            MessageCanal::create([
+                'entreprise_id' => $entreprise->id,
+                'client_id' => $client->id,
+                'canal' => 'WhatsApp',
+                'direction' => 'sortant',
+                'texte' => $texte,
+                'conversation_id' => $phoneFrom,
+                'source' => 'auto',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Envoi WhatsApp echoue', ['phone' => $phoneFrom, 'erreur' => $e->getMessage()]);
         }
     }
 }

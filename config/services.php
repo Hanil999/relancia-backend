@@ -34,6 +34,14 @@ return [
             'channel' => env('SLACK_BOT_USER_DEFAULT_CHANNEL'),
         ],
     ],
+    'stripe' => [
+        'key' => env('STRIPE_KEY'),
+        'secret' => env('STRIPE_SECRET'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        'commission_pct' => env('STRIPE_COMMISSION_PCT', 5),
+        'currency' => env('STRIPE_CURRENCY', 'EUR'),
+        'taux_conversion' => env('STRIPE_TARIF_CONVERSION', 4900),
+    ],
     'google' => [
     'client_id' => env('GOOGLE_CLIENT_ID'),
     'client_secret' => env('GOOGLE_CLIENT_SECRET'),

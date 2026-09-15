@@ -29,7 +29,7 @@ class CommandeController extends Controller
                 'client',
                 fn ($cq) => $cq->where('nom', 'like', "%{$r}%")
             ))
-            ->with(['client', 'items', 'facture'])
+            ->with(['client', 'items', 'facture', 'paiements'])
             ->latest()
             ->paginate($request->integer('per_page', 20));
 

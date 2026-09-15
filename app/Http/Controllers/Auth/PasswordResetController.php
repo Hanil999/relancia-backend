@@ -37,6 +37,13 @@ class PasswordResetController extends Controller
             'token' => ['required'],
             'email' => ['required', 'email'],
             'password' => ['required', 'confirmed', PasswordRule::min(8)],
+        ], [
+            'token.required' => 'Ce lien de réinitialisation est invalide ou incomplet. Demandez-en un nouveau.',
+            'email.required' => 'L\'adresse email est requise pour réinitialiser le mot de passe.',
+            'email.email' => 'L\'adresse email est invalide.',
+            'password.required' => 'Le nouveau mot de passe est requis.',
+            'password.confirmed' => 'Les mots de passe ne correspondent pas.',
+            'password.min' => 'Le mot de passe doit contenir au moins 8 caractères.',
         ]);
 
         if ($validator->fails()) {

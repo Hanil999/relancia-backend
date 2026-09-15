@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\CanalEntreprise;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -63,20 +64,85 @@ class TelegramService
         $canal->update(['actif' => false]);
     }
 
-    public function envoyerMessage(CanalEntreprise $canal, string|int $chatId, string $texte): array
+    public function envoyerMessage(CanalEntreprise $canal, string|int $chatId, string $texte, ?string $boutonUrl = null): array
     {
-        return $this->call($canal->token, 'sendMessage', [
+        $params = [
             'chat_id' => $chatId,
             'text' => $texte,
-            'parse_mode' => 'HTML',
-        ]);
+        ];
+
+        // Si un lien est fourni, il est présenté dans un bouton cliquable
+        // plutôt qu'une longue URL collée dans le texte.
+        if ($boutonUrl) {
+            $params['reply_markup'] = [
+                'inline_keyboard' => [[
+                    ['text' => '💳 Payer par carte', 'url' => $boutonUrl],
+                ]],
+            ];
+        }
+
+        $result = $this->call($canal->token, 'sendMessage', $params);
+
+        if (! ($result['ok'] ?? false)) {
+            Log::error('Telegram sendMessage refuse', [
+                'chat_id' => $chatId,
+                'description' => $result['description'] ?? 'erreur inconnue',
+            ]);
+
+            throw new RuntimeException(
+                'Telegram sendMessage: ' . ($result['description'] ?? 'erreur inconnue')
+            );
+        }
+
+        return $result;
+    }
+
+    /**
+     * Télécharge une photo reçue via Telegram.
+     * Retourne le chemin local du fichier ou null en cas d'échec.
+     */
+    public function telechargerPhoto(string $token, string $fileId): ?string
+    {
+        $fileInfo = $this->call($token, 'getFile', ['file_id' => $fileId]);
+
+        if (! ($fileInfo['ok'] ?? false)) {
+            Log::warning('Telegram getFile echoue', ['file_id' => $fileId]);
+            return null;
+        }
+
+        $filePath = $fileInfo['result']['file_path'] ?? null;
+        if (! $filePath) {
+            return null;
+        }
+
+        $url = "https://api.telegram.org/file/bot{$token}/{$filePath}";
+
+        $response = Http::timeout(30)->get($url);
+
+        if (! $response->successful()) {
+            return null;
+        }
+
+        $ext = pathinfo($filePath, PATHINFO_EXTENSION) ?: 'jpg';
+        $filename = 'preuve_' . Str::random(20) . ".{$ext}";
+        $destPath = storage_path("app/public/paiements/{$filename}");
+
+        \Illuminate\Support\Facades\File::makeDirectory(dirname($destPath), 0755, true, true);
+        file_put_contents($destPath, $response->body());
+
+        return "paiements/{$filename}";
     }
 
     private function call(string $token, string $method, array $params = []): array
     {
-        $response = Http::asJson()
-            ->timeout(15)
-            ->post(self::API_BASE . $token . '/' . $method, $params);
+        try {
+            $response = Http::asJson()
+                ->timeout(15)
+                ->post(self::API_BASE . $token . '/' . $method, $params);
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            Log::error('Telegram API injoignable', ['method' => $method, 'erreur' => $e->getMessage()]);
+            throw new RuntimeException('Telegram API injoignable: ' . $e->getMessage());
+        }
 
         return $response->json() ?? ['ok' => false, 'description' => 'Réponse invalide'];
     }

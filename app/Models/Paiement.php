@@ -13,11 +13,27 @@ class Paiement extends Model
         'methode',
         'statut',
         'reference',
+        'idempotency_key',
+        'stripe_session_id',
+        'stripe_payment_intent_id',
+        'commission_relancia',
+        'commission_pct',
+        'montant_reverse',
+        'preuve_image',
+        'preuve_verifiee',
+        'montant_detecte',
+        'ocr_texte',
+        'verification_message',
         'paye_le',
     ];
 
     protected $casts = [
         'montant' => 'decimal:2',
+        'montant_detecte' => 'decimal:2',
+        'commission_relancia' => 'decimal:2',
+        'commission_pct' => 'decimal:2',
+        'montant_reverse' => 'decimal:2',
+        'preuve_verifiee' => 'boolean',
         'paye_le' => 'datetime',
     ];
 

@@ -38,6 +38,11 @@ class CommandeParserService
         'un', 'une', 'des', 'le', 'la', 'les', 'du', 'de', 'au',
         'ce', 'cette', 'ces', 'mon', 'ma', 'mes', 'ton', 'ta', 'tes',
         'la', 'lui', 'leur', 'leurs',
+        'modifier', 'changer', 'remplacer', 'annuler', 'supprimer', 'effacer',
+        'nouveau', 'nouvelle', 'autre', 'autres', 'plutot', 'plutôt',
+        'aussi', 'bien', 'encore', 'trop', 'peu', 'beaucoup', 'assez',
+        'merci', 'ok', 'oui', 'non', 'salut', 'bonjour', 'bonsoir',
+        'livraison', 'livrer', 'paiement', 'payer',
     ];
 
     /**
@@ -84,7 +89,7 @@ class CommandeParserService
     ];
 
     /** Score minimum (0-100) de similarité texte pour valider un rapprochement produit. */
-    private const SEUIL_SIMILARITE = 45;
+    private const SEUIL_SIMILARITE = 65;
 
     /**
      * @param  Collection<int, \App\Models\Produit>  $produits  Catalogue de l'entreprise.
@@ -104,6 +109,17 @@ class CommandeParserService
             [$quantite, $texteProduit] = $this->extraireQuantite($segment);
 
             if (trim($texteProduit) === '') {
+                continue;
+            }
+
+            // Ignorer les segments trop courts (< 3 caractères significatifs)
+            // pour éviter les faux matches ("ok", "oui", "non", "2", etc.)
+            $motsSignificatifs = array_filter(
+                explode(' ', $this->normaliser($texteProduit)),
+                fn ($m) => mb_strlen($m) >= 3
+            );
+
+            if (count($motsSignificatifs) === 0) {
                 continue;
             }
 

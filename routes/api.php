@@ -19,7 +19,6 @@ use App\Http\Controllers\MessageParserController;
 use App\Http\Controllers\NotificationInterneController;
 use App\Http\Controllers\PaiementController;
 use App\Http\Controllers\StockController;
-use App\Http\Controllers\SimulationController;
 use App\Http\Controllers\TelegramController;
 use App\Http\Controllers\WhatsAppController;
 
@@ -52,8 +51,6 @@ Route::patch('entreprises/{entreprise}/commandes/{commande}/statut', [CommandeCo
 
 Route::post('entreprises/{entreprise}/messages/analyser', [MessageParserController::class, 'analyser']);
 
-Route::post('entreprises/{entreprise}/simulation/messages', [SimulationController::class, 'repondre']);
-
 Route::apiResource('entreprises.clients', ClientController::class)
     ->only(['index', 'store', 'show']);
 
@@ -64,6 +61,11 @@ Route::get('entreprises/{entreprise}/factures/{facture}/telecharger', [FactureCo
 Route::post('entreprises/{entreprise}/commandes/{commande}/facture', [FactureController::class, 'generer']);
 
 Route::post('entreprises/{entreprise}/commandes/{commande}/paiements', [PaiementController::class, 'store']);
+Route::get('entreprises/{entreprise}/commandes/{commande}/paiements', [PaiementController::class, 'index']);
+
+Route::post('entreprises/{entreprise}/commandes/{commande}/stripe/session', [\App\Http\Controllers\StripeController::class, 'creerSession']);
+
+Route::patch('entreprises/{entreprise}/settings', [EntrepriseController::class, 'updateSettings']);
 
 Route::get('entreprises/{entreprise}/notifications', [NotificationInterneController::class, 'index']);
 Route::patch('entreprises/{entreprise}/notifications/{notification}/lue', [NotificationInterneController::class, 'marquerLue']);
@@ -127,6 +129,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/entreprises/{entreprise}/canaux/whatsapp', [WhatsAppController::class, 'store']);
     Route::delete('/entreprises/{entreprise}/canaux/whatsapp', [WhatsAppController::class, 'destroy']);
     Route::post('/entreprises/{entreprise}/canaux/whatsapp/envoyer', [WhatsAppController::class, 'envoyer']);
+    Route::post('/entreprises/{entreprise}/canaux/whatsapp/abonner', [WhatsAppController::class, 'abonner']);
     Route::get('/entreprises/{entreprise}/canaux/whatsapp/conversations', [WhatsAppController::class, 'conversations']);
     Route::get('/entreprises/{entreprise}/canaux/whatsapp/conversations/{client}/messages', [WhatsAppController::class, 'messages']);
     Route::get('/entreprises/{entreprise}/canaux/whatsapp/produits', [WhatsAppController::class, 'produits']);
@@ -181,6 +184,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/utilisateurs', function () {
             return response()->json(\App\Models\User::with('roles')->paginate(20));
         });
+        Route::get('/admin/dashboard/synthese', [\App\Http\Controllers\AdminDashboardController::class, 'synthese']);
+        Route::get('/admin/facturation/synthese', [\App\Http\Controllers\RelanciaComptabiliteController::class, 'synthese']);
+        Route::patch('/admin/entreprises/{entreprise}/commission', [\App\Http\Controllers\RelanciaComptabiliteController::class, 'modifierCommission']);
     });
 });
 
@@ -189,3 +195,9 @@ Route::post('/webhooks/telegram/{entreprise}/{secret}', [TelegramController::cla
 // === WHATSAPP WEBHOOKS (PUBLIC, no auth) ===
 Route::get('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::class, 'challenge']);
 Route::post('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::class, 'webhook']);
+
+// === STRIPE WEBHOOKS (PUBLIC, no auth) ===
+Route::post('/webhooks/stripe', [\App\Http\Controllers\StripeController::class, 'webhook']);
+
+// === STRIPE RETURN (PUBLIC) : après paiement, le client est ramené sur son bot Telegram ===
+Route::get('/paiements/stripe/retour', [\App\Http\Controllers\StripeController::class, 'retour']);

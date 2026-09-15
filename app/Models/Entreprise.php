@@ -12,12 +12,23 @@ class Entreprise extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'gerant_id', 'nom', 'secteur_activite', 'telephone', 'email_contact', 'actif',
+        'gerant_id', 'nom', 'secteur_activite', 'telephone', 'email_contact', 'actif', 'acompte_pct',
+        'commission_pct',
     ];
 
     protected $casts = [
         'actif' => 'boolean',
+        'acompte_pct' => 'integer',
+        'commission_pct' => 'decimal:2',
     ];
+
+    /** Part de Relancia (%) appliquée sur le montant HT de cette entreprise. */
+    public function commissionPct(): float
+    {
+        $commission = (float) ($this->commission_pct ?? config('services.stripe.commission_pct', 5));
+
+        return $commission;
+    }
 
     public function gerant()
     {

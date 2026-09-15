@@ -76,6 +76,24 @@ class Commande extends Model
         return self::LABELS_STATUT[$this->statut] ?? $this->statut;
     }
 
+    public function getMontantPayeAttribute(): float
+    {
+        return (float) $this->paiements->where('statut', 'paye')->sum('montant');
+    }
+
+    public function getResteAPayerAttribute(): float
+    {
+        return max(0, (float) $this->montant_total - $this->montant_paye);
+    }
+
+    public function getPeutConfirmerAttribute(): bool
+    {
+        $pct = $this->entreprise?->acompte_pct ?? 50;
+        $montantRequis = (float) $this->montant_total * $pct / 100;
+
+        return $this->montant_paye >= $montantRequis;
+    }
+
     public function entreprise(): BelongsTo
     {
         return $this->belongsTo(Entreprise::class);

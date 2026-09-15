@@ -103,6 +103,7 @@ public function me(Request $request)
         $entreprise = $user->entrepriseGeree;
         $entrepriseId = $entreprise?->id;
         $entrepriseNom = $entreprise?->nom;
+        $entrepriseAcomptePct = $entreprise?->acompte_pct ?? 50;
     } elseif ($user->hasRole('employe')) {
         $entreprise = $user->entreprisesEmploye()
             ->wherePivot('actif', true)
@@ -111,6 +112,7 @@ public function me(Request $request)
         $entrepriseId = $entreprise?->id;
         $entrepriseNom = $entreprise?->nom;
         $peutGererCatalogue = (bool) ($entreprise?->pivot?->peut_gerer_catalogue ?? false);
+        $entrepriseAcomptePct = $entreprise?->acompte_pct ?? 50;
     }
 
     return response()->json([
@@ -122,6 +124,7 @@ public function me(Request $request)
             'peut_gerer_catalogue' => $peutGererCatalogue,
             'entreprise_id' => $entrepriseId,
             'entreprise_nom' => $entrepriseNom,
+            'entreprise_acompte_pct' => $entrepriseAcomptePct ?? 50,
         ],
     ]);
 }}

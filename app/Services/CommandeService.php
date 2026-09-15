@@ -7,8 +7,10 @@ use App\Events\CommandeMiseAJour;
 use App\Models\Client;
 use App\Models\Commande;
 use App\Models\Entreprise;
+use App\Models\MessageCanal;
 use Illuminate\Broadcasting\BroadcastException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class CommandeService
 {
@@ -17,6 +19,7 @@ class CommandeService
         private readonly StockService $stock,
         private readonly NotificationService $notifications,
         private readonly InvoiceService $invoices,
+        private readonly TelegramService $telegram,
     ) {
     }
 
@@ -216,9 +219,20 @@ class CommandeService
     {
         abort_unless(in_array($statut, Commande::STATUTS, true), 422, 'Statut invalide.');
 
+        $ancienStatut = $commande->statut;
         $etaitConfirmee = in_array($commande->statut, ['confirmee', 'expediee', 'livree'], true);
 
         if ($statut === 'confirmee' && ! $etaitConfirmee) {
+            $pct = $commande->entreprise->acompte_pct ?? 50;
+            $montantRequis = (float) $commande->montant_total * $pct / 100;
+            $montantPaye = (float) $commande->paiements->where('statut', 'paye')->sum('montant');
+
+            if ($montantPaye < $montantRequis) {
+                $payeFmt = number_format($montantPaye, 0, ',', ' ');
+                $requisFmt = number_format($montantRequis, 0, ',', ' ');
+                abort(422, "Acompte insuffisant : {$payeFmt} Ar paye sur {$requisFmt} Ar requis ({$pct}%).");
+            }
+
             foreach ($commande->items as $item) {
                 if ($item->produit && ! $this->stock->disponible($item->produit, $item->quantite)) {
                     abort(422, "Stock insuffisant pour {$item->produit_nom}.");
@@ -260,13 +274,101 @@ class CommandeService
             $this->invoices->genererPourCommande($commande);
         }
 
+        if ($statut === 'confirmee' && ! $etaitConfirmee) {
+            app(RelanciaComptabiliteService::class)->facturerCommande($commande);
+            $this->notifierClientStatut($commande, 'confirmee');
+        }
+
         if ($statut === 'annulee') {
             $this->notifications->commandeAnnulee($commande);
+            $this->notifierClientStatut($commande, 'annulee');
+        }
+
+        if ($statut === 'livree' && $ancienStatut !== 'livree') {
+            $this->notifierClientStatut($commande, 'livree');
         }
 
         $this->diffuser(new CommandeMiseAJour($commande->fresh(['items', 'client', 'facture'])));
 
         return $commande;
+    }
+
+    private function notifierClientStatut(Commande $commande, string $statut): void
+    {
+        $canal = $commande->entreprise->canalTelegram();
+        if (! $canal || ! $canal->actif) {
+            return;
+        }
+
+        $chatId = $commande->client?->entreprises()
+            ->where('entreprises.id', $commande->entreprise_id)
+            ->first()?->pivot?->identifiant_social
+            ?? (string) $commande->client?->identifiant_externe;
+
+        if (! $chatId) {
+            $dernierMessage = MessageCanal::where('entreprise_id', $commande->entreprise_id)
+                ->where('client_id', $commande->client_id)
+                ->where('canal', 'Telegram')
+                ->latest()
+                ->first();
+            $chatId = $dernierMessage?->conversation_id;
+        }
+
+        if (! $chatId) {
+            return;
+        }
+
+        $items = $commande->items->map(fn ($i) => "{$i->quantite}x {$i->produit_nom}")->implode(', ');
+        $montant = number_format((float) $commande->montant_total, 0, ',', ' ');
+        $boutonUrl = null;
+
+        $texte = match ($statut) {
+            'confirmee' => "Votre commande {$commande->numero} est confirmée ! ({$items} — {$montant} Ar). Préparation en cours.",
+            'annulee' => "Votre commande {$commande->numero} a été annulée.",
+            'livree' => "Votre commande {$commande->numero} a été livrée.",
+            default => null,
+        };
+
+        if (! $texte) {
+            return;
+        }
+
+        if ($statut === 'livree') {
+            $reste = (float) $commande->reste_a_payer;
+            if ($reste > 0) {
+                $texte .= "\n\nSolde restant à régler : " . number_format($reste, 0, ',', ' ') . " Ar.";
+                try {
+                    $stripe = app(StripeService::class);
+                    if ($stripe->estConfigure()) {
+                        $sessionData = $stripe->creerSessionCheckout($commande, $reste);
+                        $boutonUrl = $sessionData['url'];
+                    }
+                } catch (\Throwable) {
+                    $boutonUrl = null;
+                }
+            } else {
+                $texte .= "\n\nCommande intégralement réglée. Merci !";
+            }
+        }
+
+        try {
+            $this->telegram->envoyerMessage($canal, $chatId, $texte, $boutonUrl);
+
+            MessageCanal::create([
+                'entreprise_id' => $commande->entreprise_id,
+                'client_id' => $commande->client_id,
+                'canal' => 'Telegram',
+                'direction' => 'sortant',
+                'texte' => $texte,
+                'conversation_id' => $chatId,
+                'source' => 'auto',
+            ]);
+        } catch (\Throwable $e) {
+            Log::warning('Notification confirmation client Telegram echouee', [
+                'commande_id' => $commande->id,
+                'erreur' => $e->getMessage(),
+            ]);
+        }
     }
 
     private function diffuser(object $event): void

@@ -10,6 +10,7 @@ use App\Models\NotificationInterne;
 use App\Models\Paiement;
 use App\Models\Produit;
 use Illuminate\Broadcasting\BroadcastException;
+use Illuminate\Support\Facades\Log;
 
 class NotificationService
 {
@@ -96,7 +97,8 @@ class NotificationService
         try {
             broadcast(new NotificationCreee($notification))->toOthers();
         } catch (BroadcastException $e) {
-            report($e);
+            // Le serveur temps réel (Reverb) n'est pas dispo : on continue sans notification live.
+            Log::debug('Broadcast notification indisponible : temps réel désactivé');
         }
 
         return $notification;
