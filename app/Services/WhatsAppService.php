@@ -15,10 +15,11 @@ class WhatsAppService
     /**
      * Verify the access token, fetch the phone number info, and store the canal.
      */
-    public function connecter(int $entrepriseId, string $phoneNumberId, string $accessToken): CanalEntreprise
+    public function connecter(int $entrepriseId, string $phoneNumberId, string $accessToken, ?string $appSecret = null): CanalEntreprise
     {
         $phoneNumberId = trim($phoneNumberId);
         $accessToken = trim($accessToken);
+        $appSecret = $appSecret !== null ? trim($appSecret) : null;
 
         // Verify the token by fetching the phone number info
         $response = Http::withToken($accessToken)
@@ -37,6 +38,10 @@ class WhatsAppService
         $displayPhoneNumber = $data['display_phone_number'] ?? null;
         $verifiedName = $data['verified_name'] ?? null;
 
+        // Conserver l'App Secret déjà renseigné lors d'une reconnexion sans champ
+        $existant = CanalEntreprise::where('entreprise_id', $entrepriseId)->where('type', 'whatsapp')->first();
+        $appSecret = $appSecret ?: ($existant->app_secret ?? null);
+
         $canal = CanalEntreprise::updateOrCreate(
             ['entreprise_id' => $entrepriseId, 'type' => 'whatsapp'],
             [
@@ -44,6 +49,7 @@ class WhatsAppService
                 'bot_username' => $verifiedName ?: $displayPhoneNumber,
                 'bot_id' => $phoneNumberId,
                 'webhook_secret' => Str::random(40),
+                'app_secret' => $appSecret ?: null,
                 'actif' => false,
             ]
         );
@@ -142,7 +148,8 @@ class WhatsAppService
         }
 
         $response = Http::withToken($accessToken)
-            ->timeout(15)
+            ->timeout(30)
+            ->connectTimeout(15)
             ->post(self::GRAPH_API . '/' . $phoneNumberId . '/messages', $payload);
 
         $data = $response->json();
@@ -166,7 +173,8 @@ class WhatsAppService
     {
         // 1. Récupérer l'URL offloadée du média
         $info = Http::withToken($token)
-            ->timeout(15)
+            ->timeout(30)
+            ->connectTimeout(15)
             ->get(self::GRAPH_API . '/' . $mediaId);
 
         if (! $info->successful()) {
@@ -212,6 +220,7 @@ class WhatsAppService
 
     /**
      * Verify the X-Hub-Signature-256 HMAC signature sent by Meta.
+     * Meta signe le corps de la requête avec l'App Secret de l'application.
      */
     public function verifierSignature(CanalEntreprise $canal, string $rawBody, string $signature): bool
     {
@@ -219,7 +228,13 @@ class WhatsAppService
             return false;
         }
 
-        $expected = 'sha256=' . hash_hmac('sha256', $rawBody, $canal->webhook_secret);
+        $appSecret = $canal->app_secret;
+
+        if (empty($appSecret)) {
+            return false;
+        }
+
+        $expected = 'sha256=' . hash_hmac('sha256', $rawBody, $appSecret);
 
         return hash_equals($expected, $signature);
     }

@@ -10,7 +10,7 @@ class MessageCanal extends Model
     protected $table = 'messages_canal';
 
     protected $fillable = [
-        'entreprise_id', 'client_id', 'canal', 'direction', 'texte', 'media_url', 'media_type', 'conversation_id', 'source',
+        'entreprise_id', 'client_id', 'canal', 'direction', 'texte', 'media_url', 'media_type', 'conversation_id', 'source', 'statut_envoi',
     ];
 
     public function client(): BelongsTo

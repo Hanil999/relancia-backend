@@ -21,6 +21,7 @@ use App\Http\Controllers\PaiementController;
 use App\Http\Controllers\StockController;
 use App\Http\Controllers\TelegramController;
 use App\Http\Controllers\WhatsAppController;
+use App\Http\Controllers\FacebookMessengerController;
 
 /*
 |--------------------------------------------------------------------------
@@ -134,6 +135,16 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/entreprises/{entreprise}/canaux/whatsapp/conversations/{client}/messages', [WhatsAppController::class, 'messages']);
     Route::get('/entreprises/{entreprise}/canaux/whatsapp/produits', [WhatsAppController::class, 'produits']);
 
+    // === FACEBOOK MESSENGER ROUTES (authenticated) ===
+    Route::get('/entreprises/{entreprise}/canaux/messenger', [FacebookMessengerController::class, 'show']);
+    Route::post('/entreprises/{entreprise}/canaux/messenger', [FacebookMessengerController::class, 'store']);
+    Route::delete('/entreprises/{entreprise}/canaux/messenger', [FacebookMessengerController::class, 'destroy']);
+    Route::post('/entreprises/{entreprise}/canaux/messenger/envoyer', [FacebookMessengerController::class, 'envoyer']);
+    Route::post('/entreprises/{entreprise}/canaux/messenger/abonner', [FacebookMessengerController::class, 'abonner']);
+    Route::get('/entreprises/{entreprise}/canaux/messenger/conversations', [FacebookMessengerController::class, 'conversations']);
+    Route::get('/entreprises/{entreprise}/canaux/messenger/conversations/{client}/messages', [FacebookMessengerController::class, 'messages']);
+    Route::get('/entreprises/{entreprise}/canaux/messenger/produits', [FacebookMessengerController::class, 'produits']);
+
     // Accessible admin (concerné) + gérant propriétaire — filtré par la Policy
     Route::get('/entreprises/{entreprise}', [EntrepriseController::class, 'show']);
     Route::patch('/entreprises/{entreprise}', [EntrepriseController::class, 'update']);
@@ -195,6 +206,10 @@ Route::post('/webhooks/telegram/{entreprise}/{secret}', [TelegramController::cla
 // === WHATSAPP WEBHOOKS (PUBLIC, no auth) ===
 Route::get('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::class, 'challenge']);
 Route::post('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::class, 'webhook']);
+
+// === FACEBOOK MESSENGER WEBHOOKS (PUBLIC, no auth) ===
+Route::get('/webhooks/messenger/{entreprise}/{secret}', [FacebookMessengerController::class, 'challenge']);
+Route::post('/webhooks/messenger/{entreprise}/{secret}', [FacebookMessengerController::class, 'webhook']);
 
 // === STRIPE WEBHOOKS (PUBLIC, no auth) ===
 Route::post('/webhooks/stripe', [\App\Http\Controllers\StripeController::class, 'webhook']);

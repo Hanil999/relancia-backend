@@ -268,7 +268,7 @@ class TelegramController extends Controller
 
         $entreprise->clients()->syncWithoutDetaching([
             $client->id => [
-                'plateforme_sociale' => 'Telegram',
+                'plateforme_sociale' => 'telegram',
                 'identifiant_social' => $chatId,
                 'premier_contact_le' => now(),
             ],

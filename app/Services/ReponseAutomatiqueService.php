@@ -456,7 +456,7 @@ class ReponseAutomatiqueService
             return '';
         }
 
-        return in_array($canal, ['Telegram', 'WhatsApp'])
+        return in_array($canal, ['Telegram', 'WhatsApp', 'Messenger'])
             ? "• 💳 Carte bancaire (en ligne) : touchez le bouton « 💳 Payer par carte » ci-dessous\n"
             : "• 💳 Carte bancaire (en ligne) : {$lien}\n";
     }

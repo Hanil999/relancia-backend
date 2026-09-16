@@ -11,17 +11,18 @@ class CanalEntreprise extends Model
 
     protected $fillable = [
         'entreprise_id', 'type', 'token', 'bot_username',
-        'bot_id', 'webhook_secret', 'actif', 'connecte_le',
+        'bot_id', 'webhook_secret', 'app_secret', 'actif', 'connecte_le',
     ];
 
     protected $casts = [
         'token' => 'encrypted', // jamais stocké en clair en base
+        'app_secret' => 'encrypted',
         'actif' => 'boolean',
         'connecte_le' => 'datetime',
     ];
 
     // Ne jamais renvoyer le token brut dans les réponses JSON
-    protected $hidden = ['token', 'webhook_secret'];
+    protected $hidden = ['token', 'app_secret', 'webhook_secret'];
 
     public function entreprise(): BelongsTo
     {

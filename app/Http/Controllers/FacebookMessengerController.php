@@ -7,31 +7,31 @@ use App\Models\Client;
 use App\Models\Commande;
 use App\Models\Entreprise;
 use App\Models\MessageCanal;
+use App\Services\FacebookMessengerService;
 use App\Services\NotificationService;
 use App\Services\OcrService;
 use App\Services\PaiementService;
 use App\Services\ReponseAutomatiqueService;
-use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
-class WhatsAppController extends Controller
+class FacebookMessengerController extends Controller
 {
     public function __construct(
-        private WhatsAppService $whatsapp,
+        private FacebookMessengerService $messenger,
         private ReponseAutomatiqueService $reponses,
         private NotificationService $notifications,
         private PaiementService $paiements,
         private OcrService $ocr,
     ) {}
 
-    /** GET /entreprises/{entreprise}/canaux/whatsapp */
+    /** GET /entreprises/{entreprise}/canaux/messenger */
     public function show(Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
 
-        $canal = $entreprise->canaux()->where('type', 'whatsapp')->first();
+        $canal = $entreprise->canaux()->where('type', 'messenger')->first();
 
         if (! $canal) {
             return response()->json(['connecte' => false]);
@@ -40,29 +40,29 @@ class WhatsAppController extends Controller
         return response()->json([
             'connecte' => $canal->actif,
             'bot_username' => $canal->bot_username,
-            'phone_number_id' => $canal->bot_id,
+            'page_id' => $canal->bot_id,
             'connecte_le' => $canal->connecte_le,
             'webhook_callback_url' => rtrim(config('app.url'), '/')
-                . "/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
+                . "/api/webhooks/messenger/{$entreprise->id}/{$canal->webhook_secret}",
             'webhook_verify_token' => $canal->webhook_secret,
         ]);
     }
 
-    /** POST /entreprises/{entreprise}/canaux/whatsapp */
+    /** POST /entreprises/{entreprise}/canaux/messenger */
     public function store(Request $request, Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
 
         $data = $request->validate([
-            'phone_number_id' => ['required', 'string', 'min:5'],
+            'page_id' => ['required', 'string', 'min:4'],
             'access_token' => ['required', 'string', 'min:20'],
             'app_secret' => ['nullable', 'string', 'min:8'],
         ]);
 
         try {
-            $canal = $this->whatsapp->connecter(
+            $canal = $this->messenger->connecter(
                 $entreprise->id,
-                $data['phone_number_id'],
+                $data['page_id'],
                 $data['access_token'],
                 $data['app_secret'] ?? null,
             );
@@ -70,47 +70,45 @@ class WhatsAppController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        // Abonnement du webhook Meta (sans quoi les messages ne nous parviennent pas)
-        $webhook = $this->whatsapp->abonnerWebhook($canal);
+        $webhook = $this->messenger->abonnerWebhook($canal);
 
         return response()->json([
             'connecte' => true,
             'bot_username' => $canal->bot_username,
             'webhook_callback_url' => rtrim(config('app.url'), '/')
-                . "/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
+                . "/api/webhooks/messenger/{$entreprise->id}/{$canal->webhook_secret}",
             'webhook_verify_token' => $canal->webhook_secret,
             'webhook_subscribed' => $webhook['ok'],
             'webhook_message' => $webhook['message'],
         ], 201);
     }
 
-    /** DELETE /entreprises/{entreprise}/canaux/whatsapp */
+    /** DELETE /entreprises/{entreprise}/canaux/messenger */
     public function destroy(Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
 
-        $canal = $entreprise->canaux()->where('type', 'whatsapp')->first();
+        $canal = $entreprise->canaux()->where('type', 'messenger')->first();
 
         if ($canal) {
-            $this->whatsapp->desabonnerWebhook($canal);
-            $this->whatsapp->deconnecter($canal);
+            $this->messenger->deconnecter($canal);
         }
 
         return response()->json(['connecte' => false]);
     }
 
-    /** POST /entreprises/{entreprise}/canaux/whatsapp/abonner */
+    /** POST /entreprises/{entreprise}/canaux/messenger/abonner */
     public function abonner(Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
 
-        $canal = $entreprise->canaux()->where('type', 'whatsapp')->where('actif', true)->first();
+        $canal = $entreprise->canaux()->where('type', 'messenger')->where('actif', true)->first();
 
         if (! $canal) {
-            return response()->json(['message' => 'WhatsApp non connecté'], 404);
+            return response()->json(['message' => 'Messenger non connecté'], 404);
         }
 
-        $webhook = $this->whatsapp->abonnerWebhook($canal);
+        $webhook = $this->messenger->abonnerWebhook($canal);
 
         return response()->json([
             'webhook_subscribed' => $webhook['ok'],
@@ -118,13 +116,13 @@ class WhatsAppController extends Controller
         ], $webhook['ok'] ? 200 : 422);
     }
 
-    /** GET /entreprises/{entreprise}/canaux/whatsapp/conversations */
+    /** GET /entreprises/{entreprise}/canaux/messenger/conversations */
     public function conversations(Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
 
         $derniers = MessageCanal::where('entreprise_id', $entreprise->id)
-            ->where('canal', 'WhatsApp')
+            ->where('canal', 'Messenger')
             ->with('client:id,nom')
             ->orderByDesc('created_at')
             ->get()
@@ -141,9 +139,9 @@ class WhatsAppController extends Controller
 
         $clientIds = $derniers->pluck('client_id')->values()->all();
 
-        $dernieresCommandes = \App\Models\Commande::where('entreprise_id', $entreprise->id)
+        $dernieresCommandes = Commande::where('entreprise_id', $entreprise->id)
             ->whereIn('client_id', $clientIds)
-            ->whereIn('canal', ['WhatsApp', 'Telegram', 'Messenger', 'Instagram'])
+            ->whereIn('canal', ['Telegram', 'WhatsApp', 'Messenger', 'Instagram'])
             ->latest()
             ->get()
             ->keyBy('client_id');
@@ -165,20 +163,20 @@ class WhatsAppController extends Controller
         return response()->json($derniers);
     }
 
-    /** GET /entreprises/{entreprise}/canaux/whatsapp/conversations/{client}/messages */
+    /** GET /entreprises/{entreprise}/canaux/messenger/conversations/{client}/messages */
     public function messages(Entreprise $entreprise, Client $client)
     {
         $this->authorize('update', $entreprise);
 
         $messages = MessageCanal::where('entreprise_id', $entreprise->id)
-            ->where('canal', 'WhatsApp')
+            ->where('canal', 'Messenger')
             ->where('client_id', $client->id)
             ->orderBy('created_at')
-            ->get(['id', 'direction', 'texte', 'source', 'created_at']);
+            ->get(['id', 'direction', 'texte', 'media_url', 'media_type', 'source', 'created_at']);
 
-        $commandes = \App\Models\Commande::where('entreprise_id', $entreprise->id)
+        $commandes = Commande::where('entreprise_id', $entreprise->id)
             ->where('client_id', $client->id)
-            ->where('canal', 'WhatsApp')
+            ->where('canal', 'Messenger')
             ->orderByDesc('created_at')
             ->get()
             ->map(fn ($cmd) => [
@@ -197,7 +195,7 @@ class WhatsAppController extends Controller
         ]);
     }
 
-    /** POST /entreprises/{entreprise}/canaux/whatsapp/envoyer */
+    /** POST /entreprises/{entreprise}/canaux/messenger/envoyer */
     public function envoyer(Request $request, Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
@@ -207,15 +205,15 @@ class WhatsAppController extends Controller
             'texte' => ['required', 'string'],
         ]);
 
-        $canal = $entreprise->canaux()->where('type', 'whatsapp')->where('actif', true)->first();
+        $canal = $entreprise->canaux()->where('type', 'messenger')->where('actif', true)->first();
 
         if (! $canal) {
-            return response()->json(['message' => 'WhatsApp non connecte'], 422);
+            return response()->json(['message' => 'Messenger non connecté'], 422);
         }
 
         $dernierMessage = MessageCanal::where('entreprise_id', $entreprise->id)
             ->where('client_id', $data['client_id'])
-            ->where('canal', 'WhatsApp')
+            ->where('canal', 'Messenger')
             ->latest()
             ->first();
 
@@ -223,16 +221,16 @@ class WhatsAppController extends Controller
             return response()->json(['message' => 'Conversation introuvable'], 404);
         }
 
-        $result = $this->whatsapp->envoyerMessage($canal, $dernierMessage->conversation_id, $data['texte']);
+        $result = $this->messenger->envoyerMessage($canal, $dernierMessage->conversation_id, $data['texte']);
 
         if (! ($result['ok'] ?? false)) {
-            return response()->json(['message' => "Echec de l'envoi WhatsApp"], 502);
+            return response()->json(['message' => "Échec de l'envoi Messenger"], 502);
         }
 
         $message = MessageCanal::create([
             'entreprise_id' => $entreprise->id,
             'client_id' => $data['client_id'],
-            'canal' => 'WhatsApp',
+            'canal' => 'Messenger',
             'direction' => 'sortant',
             'texte' => $data['texte'],
             'conversation_id' => $dernierMessage->conversation_id,
@@ -242,7 +240,7 @@ class WhatsAppController extends Controller
         return response()->json($message, 201);
     }
 
-    /** GET /entreprises/{entreprise}/canaux/whatsapp/produits */
+    /** GET /entreprises/{entreprise}/canaux/messenger/produits */
     public function produits(Entreprise $entreprise)
     {
         $this->authorize('update', $entreprise);
@@ -255,12 +253,12 @@ class WhatsAppController extends Controller
     }
 
     /**
-     * GET /webhooks/whatsapp/{entreprise}/{secret} — Meta webhook verification (challenge).
+     * GET /webhooks/messenger/{entreprise}/{secret} — Meta webhook verification (challenge).
      */
     public function challenge(Request $request, int $entrepriseId, string $secret)
     {
         $canal = CanalEntreprise::where('entreprise_id', $entrepriseId)
-            ->where('type', 'whatsapp')
+            ->where('type', 'messenger')
             ->where('webhook_secret', $secret)
             ->first();
 
@@ -268,8 +266,6 @@ class WhatsAppController extends Controller
             return response('Forbidden', 403);
         }
 
-        // PHP convertit les points en underscores dans $_GET (hub.mode → hub_mode),
-        // on lit donc la query string brute et on accepte les deux formes.
         $queryParams = [];
         parse_str($request->getQueryString() ?: '', $queryParams);
 
@@ -285,155 +281,145 @@ class WhatsAppController extends Controller
     }
 
     /**
-     * POST /webhooks/whatsapp/{entreprise}/{secret} — PUBLIC, called by Meta on incoming messages.
+     * POST /webhooks/messenger/{entreprise}/{secret} — PUBLIC, appelé par Meta.
      */
     public function webhook(Request $request, int $entrepriseId, string $secret)
     {
         $canal = CanalEntreprise::where('entreprise_id', $entrepriseId)
-            ->where('type', 'whatsapp')
+            ->where('type', 'messenger')
             ->where('webhook_secret', $secret)
             ->first();
 
         if (! $canal || ! $canal->actif) {
-            Log::warning('Webhook WhatsApp rejete', ['entreprise_id' => $entrepriseId]);
+            Log::warning('Webhook Messenger rejeté', ['entreprise_id' => $entrepriseId]);
             return response()->json(['ok' => false], 403);
         }
 
-        // Vérification HMAC uniquement si le canal a renseigné l'App Secret.
-        // Sinon, l'authentification repose sur le secret présent dans l'URL du webhook.
         $signature = $request->header('X-Hub-Signature-256');
 
         if ($signature && $canal->app_secret) {
             $rawBody = $request->getContent();
-            if (! $this->whatsapp->verifierSignature($canal, $rawBody, $signature)) {
-                Log::warning('Signature WhatsApp invalide', ['entreprise_id' => $entrepriseId]);
+            if (! $this->messenger->verifierSignature($canal->app_secret, $rawBody, $signature)) {
+                Log::warning('Signature Messenger invalide', ['entreprise_id' => $entrepriseId]);
                 return response()->json(['ok' => false], 403);
             }
         } else {
-            Log::debug('Webhook WhatsApp sans controle HMAC (app_secret non configure)', [
+            Log::debug('Webhook Messenger sans contrôle HMAC (app_secret non configuré)', [
                 'entreprise_id' => $entrepriseId,
                 'signature' => $signature ? 'presente' : 'absente',
             ]);
         }
 
         $payload = $request->json()->all();
-
-        // Meta sends multiple entries; iterate to find messages
         $entries = $payload['entry'] ?? [];
 
         foreach ($entries as $entry) {
-            $changes = $entry['changes'] ?? [];
+            $messagingEvents = $entry['messaging'] ?? [];
 
-            foreach ($changes as $change) {
-                $value = $change['value'] ?? [];
-                $messages = $value['messages'] ?? [];
+            foreach ($messagingEvents as $event) {
+                $message = $event['message'] ?? null;
+                $senderId = $event['sender']['id'] ?? null;
 
-                foreach ($messages as $msg) {
-                    $this->traiterMessage($canal, $entrepriseId, $msg, $value);
+                if (! $message || ! $senderId) {
+                    continue;
                 }
+
+                $this->traiterMessage($canal, $entrepriseId, $senderId, $message, $payload);
             }
         }
 
         return response()->json(['ok' => true]);
     }
 
-    private function traiterMessage(CanalEntreprise $canal, int $entrepriseId, array $msg, array $value): void
+    private function traiterMessage(CanalEntreprise $canal, int $entrepriseId, string $psid, array $message, array $payload): void
     {
-        $phoneFrom = $msg['from'] ?? null;
-        $type = $msg['type'] ?? null;
-
-        if (! $phoneFrom || ! $type) {
-            return;
-        }
-
         $entreprise = Entreprise::find($entrepriseId);
         if (! $entreprise) {
             return;
         }
 
-        $contacts = $value['contacts'] ?? [];
-        $nomClient = 'Client WhatsApp';
-        if (! empty($contacts[0]['profile']['name'])) {
-            $nomClient = $contacts[0]['profile']['name'];
-        }
+        $nomClient = $this->messenger->profilUser($canal->token, $psid)
+            ?: 'Client Facebook';
 
         $client = Client::firstOrCreate(
-            ['identifiant_externe' => $phoneFrom],
-            ['nom' => $nomClient, 'canal_prefere' => 'WhatsApp']
+            ['identifiant_externe' => $psid],
+            ['nom' => $nomClient, 'canal_prefere' => 'Messenger']
         );
 
         $entreprise->clients()->syncWithoutDetaching([
             $client->id => [
-                'plateforme_sociale' => 'whatsapp',
-                'identifiant_social' => $phoneFrom,
+                'plateforme_sociale' => 'facebook',
+                'identifiant_social' => $psid,
                 'premier_contact_le' => now(),
             ],
         ]);
 
         // --- PHOTO (preuve de paiement) ---
-        if ($type === 'image' && ! empty($msg['image']['id'])) {
-            $this->traiterPhotoPreuve($canal, $entreprise, $client, $phoneFrom, $msg);
-            return;
+        if (! empty($message['attachments'])) {
+            foreach ($message['attachments'] as $attachement) {
+                if (($attachement['type'] ?? '') === 'image' && ! empty($attachement['payload']['url'])) {
+                    $this->traiterPhotoPreuve($canal, $entreprise, $client, $psid, $attachement['payload']['url'], $message['mid'] ?? null);
+                    return;
+                }
+            }
         }
 
-        $texte = $msg['text']['body'] ?? null;
-        if ($type !== 'text' || ! $texte) {
+        $texte = $message['text'] ?? null;
+        if (! $texte) {
             return;
         }
 
         MessageCanal::create([
             'entreprise_id' => $entreprise->id,
             'client_id' => $client->id,
-            'canal' => 'WhatsApp',
+            'canal' => 'Messenger',
             'direction' => 'entrant',
             'texte' => $texte,
-            'conversation_id' => $phoneFrom,
+            'conversation_id' => $psid,
             'source' => 'manuel',
         ]);
 
         try {
-            $this->notifications->messageRecu($entreprise, $client, $texte, 'WhatsApp');
+            $this->notifications->messageRecu($entreprise, $client, $texte, 'Messenger');
         } catch (\Throwable $e) {
-            Log::warning('Notification message WhatsApp recu echouee', [
+            Log::warning('Notification message Messenger reçu échouée', [
                 'entreprise_id' => $entrepriseId,
                 'erreur' => $e->getMessage(),
             ]);
         }
 
         try {
-            $reponse = $this->reponses->repondre($entreprise, $client, $texte, 'WhatsApp');
+            $reponse = $this->reponses->repondre($entreprise, $client, $texte, 'Messenger');
 
-            $result = $this->whatsapp->envoyerMessage(
+            $result = $this->messenger->envoyerMessage(
                 $canal,
-                $phoneFrom,
+                $psid,
                 $reponse['message'],
                 $reponse['lien_paiement'] ?? null,
             );
 
-            // On affiche toujours la réponse dans la conversation, mais on
-            // marque 'echec' si Meta a refusé l'envoi (badge "non livré").
             MessageCanal::create([
                 'entreprise_id' => $entreprise->id,
                 'client_id' => $client->id,
-                'canal' => 'WhatsApp',
+                'canal' => 'Messenger',
                 'direction' => 'sortant',
                 'texte' => $reponse['message'],
-                'conversation_id' => $phoneFrom,
+                'conversation_id' => $psid,
                 'source' => 'auto',
                 'statut_envoi' => ($result['ok'] ?? false) ? null : 'echec',
             ]);
 
             if (! ($result['ok'] ?? false)) {
-                Log::warning('Reponse auto WhatsApp non livree par Meta', [
+                Log::warning('Réponse auto Messenger non livrée par Meta', [
                     'entreprise_id' => $entrepriseId,
-                    'phone' => $phoneFrom,
+                    'psid' => $psid,
                     'erreur' => $result['error'] ?? 'inconnue',
                 ]);
             }
         } catch (\Throwable $e) {
-            Log::error('Reponse auto WhatsApp echouee', [
+            Log::error('Réponse auto Messenger échouée', [
                 'entreprise_id' => $entrepriseId,
-                'phone' => $phoneFrom,
+                'psid' => $psid,
                 'erreur' => $e->getMessage(),
             ]);
         }
@@ -446,39 +432,34 @@ class WhatsAppController extends Controller
         CanalEntreprise $canal,
         Entreprise $entreprise,
         Client $client,
-        string $phoneFrom,
-        array $msg,
+        string $psid,
+        string $mediaUrl,
+        ?string $messageMid,
     ): void {
-        $mediaId = $msg['image']['id'] ?? null;
-
-        // 1. Enregistrer le message photo
         $msgPhoto = MessageCanal::create([
             'entreprise_id' => $entreprise->id,
             'client_id' => $client->id,
-            'canal' => 'WhatsApp',
+            'canal' => 'Messenger',
             'direction' => 'entrant',
             'texte' => '[Photo — preuve de paiement]',
-            'conversation_id' => $phoneFrom,
+            'conversation_id' => $psid,
             'source' => 'manuel',
         ]);
 
-        // 2. Télécharger la photo via l'API Meta
-        $cheminPhoto = $this->whatsapp->telechargerImage($canal->token, $canal->bot_id, $mediaId);
+        $cheminPhoto = $this->messenger->telechargerImage($canal->token, $mediaUrl);
 
         if (! $cheminPhoto) {
-            $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, 'Image non reçue. Veuillez réessayer ou envoyer une capture d\'écran plus nette.');
+            $this->envoyerReponse($canal, $psid, $entreprise, $client, 'Image non reçue. Veuillez réessayer ou envoyer une capture d\'écran plus nette.');
             return;
         }
 
-        // Mettre à jour le message avec l'URL de la photo
-        $mediaUrl = url('/storage/' . $cheminPhoto);
+        $mediaUrlFinal = url('/storage/' . $cheminPhoto);
         $msgPhoto->update([
             'texte' => '[Photo — preuve de paiement]',
-            'media_url' => $mediaUrl,
+            'media_url' => $mediaUrlFinal,
             'media_type' => 'image',
         ]);
 
-        // 3. Trouver la dernière commande en_attente du client pour cette entreprise
         $derniereCommande = Commande::where('entreprise_id', $entreprise->id)
             ->where('client_id', $client->id)
             ->whereIn('statut', ['en_attente'])
@@ -486,11 +467,10 @@ class WhatsAppController extends Controller
             ->first();
 
         if (! $derniereCommande) {
-            $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, 'Aucune commande en attente de paiement. Si vous souhaitez passer une commande, envoyez votre commande en texte.');
+            $this->envoyerReponse($canal, $psid, $entreprise, $client, 'Aucune commande en attente de paiement. Si vous souhaitez passer une commande, envoyez votre commande en texte.');
             return;
         }
 
-        // 4. OCR — extraire le montant de la photo
         $uploadedFile = new \Illuminate\Http\UploadedFile(
             storage_path("app/public/{$cheminPhoto}"),
             basename($cheminPhoto),
@@ -505,7 +485,7 @@ class WhatsAppController extends Controller
 
         $verification = $this->ocr->verifierMontant($uploadedFile, $montantAttendu);
 
-        Log::info('OCR Photo preuve WhatsApp', [
+        Log::info('OCR Photo preuve Messenger', [
             'commande_id' => $derniereCommande->id,
             'montant_attendu_acompte' => $montantAttendu,
             'montant_total' => $montantTotal,
@@ -516,7 +496,6 @@ class WhatsAppController extends Controller
             'chemin_photo' => $cheminPhoto,
         ]);
 
-        // 5. Vérifier si le montant OCR correspond à l'acompte OU au total
         $montants = $verification['montants_trouves'] ?? [];
         $matchAcompte = false;
         $matchTotal = false;
@@ -527,16 +506,15 @@ class WhatsAppController extends Controller
         }
 
         if (! empty($verification['texte']) && ($matchAcompte || $matchTotal)) {
-            // Montant détecté → enregistrer le paiement
             $montantAPayer = $matchTotal ? $montantTotal : $montantAttendu;
 
             $paiement = $this->paiements->enregistrerPaiement(
                 $derniereCommande,
                 $montantAPayer,
                 'mobile_money',
-                'WhatsApp — preuve photo',
+                'Messenger — preuve photo',
                 $uploadedFile,
-                "whatsapp:{$phoneFrom}:{$msg['id']}",
+                "messenger:{$psid}:{$messageMid}",
             );
 
             $montantFmt = number_format($montantAPayer, 0, ',', ' ');
@@ -550,9 +528,8 @@ class WhatsAppController extends Controller
                 $reponse .= " Commande intégralement payée !";
             }
 
-            $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, $reponse);
+            $this->envoyerReponse($canal, $psid, $entreprise, $client, $reponse);
         } else {
-            // Montant non reconnu ou ne correspond pas
             $detecteStr = ! empty($montants)
                 ? 'Montant(s) détecté(s) : ' . implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ') . ' Ar', $montants))
                 : 'Aucun montant détecté sur l\'image.';
@@ -562,7 +539,7 @@ class WhatsAppController extends Controller
 
             $this->envoyerReponse(
                 $canal,
-                $phoneFrom,
+                $psid,
                 $entreprise,
                 $client,
                 "Impossible de vérifier le montant automatiquement. {$detecteStr}\n"
@@ -574,33 +551,33 @@ class WhatsAppController extends Controller
 
     private function envoyerReponse(
         CanalEntreprise $canal,
-        string $phoneFrom,
+        string $psid,
         Entreprise $entreprise,
         Client $client,
         string $texte,
     ): void {
         try {
-            $result = $this->whatsapp->envoyerMessage($canal, $phoneFrom, $texte);
+            $result = $this->messenger->envoyerMessage($canal, $psid, $texte);
 
             MessageCanal::create([
                 'entreprise_id' => $entreprise->id,
                 'client_id' => $client->id,
-                'canal' => 'WhatsApp',
+                'canal' => 'Messenger',
                 'direction' => 'sortant',
                 'texte' => $texte,
-                'conversation_id' => $phoneFrom,
+                'conversation_id' => $psid,
                 'source' => 'auto',
                 'statut_envoi' => ($result['ok'] ?? false) ? null : 'echec',
             ]);
 
             if (! ($result['ok'] ?? false)) {
-                Log::warning('Envoi WhatsApp non livre par Meta', [
-                    'phone' => $phoneFrom,
+                Log::warning('Envoi Messenger non livré par Meta', [
+                    'psid' => $psid,
                     'erreur' => $result['error'] ?? 'inconnue',
                 ]);
             }
         } catch (\Throwable $e) {
-            Log::warning('Envoi WhatsApp echoue', ['phone' => $phoneFrom, 'erreur' => $e->getMessage()]);
+            Log::warning('Envoi Messenger échoué', ['psid' => $psid, 'erreur' => $e->getMessage()]);
         }
     }
 }
