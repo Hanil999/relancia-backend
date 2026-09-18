@@ -21,7 +21,7 @@ class WhatsAppService
         $accessToken = trim($accessToken);
         $appSecret = $appSecret !== null ? trim($appSecret) : null;
 
-        // Verify the token by fetching the phone number info
+        // Verify the token by fetching the object info
         $response = Http::withToken($accessToken)
             ->timeout(15)
             ->get(self::GRAPH_API . '/' . $phoneNumberId);
@@ -35,20 +35,49 @@ class WhatsAppService
             );
         }
 
+        $botId = $data['id'];
+        $wabaId = null;
+
+        // Un WABA n'expose pas display_phone_number : on résout alors le
+        // premier numéro de téléphone attaché (qui sert à envoyer/recevoir).
+        if (empty($data['display_phone_number'])) {
+            $liste = Http::withToken($accessToken)
+                ->timeout(15)
+                ->get(self::GRAPH_API . '/' . $botId . '/phone_numbers');
+
+            $numeros = $liste->json('data') ?? [];
+
+            if (empty($numeros)) {
+                throw new RuntimeException(
+                    "Aucun numéro de téléphone trouvé sur ce WhatsApp Business Account. "
+                    . ($liste->json('error.message') ?? '')
+                );
+            }
+
+            $wabaId = $botId;
+            $premier = $numeros[0];
+            $botId = $premier['id'] ?? $botId;
+            $data['display_phone_number'] = $premier['display_phone_number'] ?? null;
+            $data['verified_name'] = $premier['verified_name'] ?? null;
+        }
+
         $displayPhoneNumber = $data['display_phone_number'] ?? null;
         $verifiedName = $data['verified_name'] ?? null;
 
-        // Conserver l'App Secret déjà renseigné lors d'une reconnexion sans champ
+        // Conserver l'App Secret et le secret webhook déjà renseignés lors d'une reconnexion
+        // (régénérer le secret casserait la configuration webhook enregistrée chez Meta).
         $existant = CanalEntreprise::where('entreprise_id', $entrepriseId)->where('type', 'whatsapp')->first();
         $appSecret = $appSecret ?: ($existant->app_secret ?? null);
+        $webhookSecret = $existant ? $existant->webhook_secret : Str::random(40);
 
         $canal = CanalEntreprise::updateOrCreate(
             ['entreprise_id' => $entrepriseId, 'type' => 'whatsapp'],
             [
                 'token' => $accessToken,
                 'bot_username' => $verifiedName ?: $displayPhoneNumber,
-                'bot_id' => $phoneNumberId,
-                'webhook_secret' => Str::random(40),
+                'bot_id' => $botId,
+                'waba_id' => $wabaId,
+                'webhook_secret' => $webhookSecret,
                 'app_secret' => $appSecret ?: null,
                 'actif' => false,
             ]
@@ -70,9 +99,15 @@ class WhatsAppService
      */
     public function abonnerWebhook(CanalEntreprise $canal): array
     {
+        // L'abonnement aux webhooks WhatsApp se fait au niveau du WABA
+        // (WhatsApp Business Account), pas au niveau du numéro de téléphone.
+        $target = $canal->waba_id ?: $canal->bot_id;
+
         $response = Http::withToken($canal->token)
             ->timeout(15)
-            ->post(self::GRAPH_API . '/' . $canal->bot_id . '/subscribed_apps');
+            ->post(self::GRAPH_API . '/' . $target . '/subscribed_apps', [
+                'subscribed_fields' => 'messages',
+            ]);
 
         $data = $response->json() ?? [];
 
@@ -91,13 +126,15 @@ class WhatsAppService
         ];
     }
 
-    /** Désabonne le numéro du webhook (meilleur effort, en silence). */
+    /** Désabonne le WABA du webhook (meilleur effort, en silence). */
     public function desabonnerWebhook(CanalEntreprise $canal): void
     {
         try {
+            $target = $canal->waba_id ?: $canal->bot_id;
+
             Http::withToken($canal->token)
                 ->timeout(15)
-                ->delete(self::GRAPH_API . '/' . $canal->bot_id . '/subscribed_apps');
+                ->delete(self::GRAPH_API . '/' . $target . '/subscribed_apps');
         } catch (\Throwable $e) {
             // Meilleur effort : on ne bloque pas la déconnexion.
         }

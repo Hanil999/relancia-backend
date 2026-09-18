@@ -18,10 +18,18 @@ class SocialAuthController extends Controller
 
         $driver = Socialite::driver($provider)->stateless();
 
-        // Forcer le sélecteur de compte à chaque tentative : sans cela le
-        // navigateur réutilise silencieusement le dernier compte connecté.
+        // Multi-comptes : laisser le sélecteur de compte natif de Facebook faire
+        // son travail. `auth_type=rerequest` doit être banni d'un état propre :
+        // sans permission déjà accordée/refusée, Facebook rejette le dialogue
+        // avec « cette application a besoin d'au moins une permission supportée ».
         if ($provider === 'facebook') {
-            $driver->with(['auth_type' => 'rerequest']);
+            // App de type Entreprise → « Facebook Login for Businesses » :
+            // public_profile seul est insuffisant, Meta exige au moins UNE
+            // permission supportée SUPPLÉMENTAIRE dans le scope du dialogue.
+            // pages_show_list = accès standard (aucune review requise) et ne
+            // déclenche pas de demande « payante ». L'email reste exclu
+            // (Advanced Access requis en Live) ; emailSocialUnique() gère le repli.
+            $driver->setScopes(['public_profile', 'pages_show_list']);
         } elseif ($provider === 'google') {
             $driver->with(['prompt' => 'select_account']);
         }
@@ -61,7 +69,10 @@ class SocialAuthController extends Controller
                 'avatar' => $socialUser->getAvatar(),
                 'email_verified_at' => now(),
             ]);
-            $user->assignRole('user');
+            // Première connexion via un réseau social → le compte devient
+            // GÉRANT : il devra créer sa propre entreprise (onboarding
+            // POST /entreprises/creer) avant d'utiliser la plateforme.
+            $user->assignRole('gerant');
         }
 
         $token = $user->createToken('auth_token')->plainTextToken;

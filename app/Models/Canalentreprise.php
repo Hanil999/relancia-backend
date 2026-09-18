@@ -11,7 +11,7 @@ class CanalEntreprise extends Model
 
     protected $fillable = [
         'entreprise_id', 'type', 'token', 'bot_username',
-        'bot_id', 'webhook_secret', 'app_secret', 'actif', 'connecte_le',
+        'bot_id', 'waba_id', 'webhook_secret', 'app_secret', 'actif', 'connecte_le',
     ];
 
     protected $casts = [

@@ -200,6 +200,41 @@ class EntrepriseController extends Controller
         return response()->json($entreprise);
     }
 
+    /**
+     * [GÉRANT] Onboarding : crée la première entreprise d'un gérant qui vient
+     * de créer son compte (inscription classique ou connexion via réseau social)
+     * et n'en possède pas encore. Évite le chemin ADMIN de store().
+     */
+    public function creerGerant(Request $request)
+    {
+        $user = $request->user();
+
+        abort_unless($user->hasRole('gerant'), 403, 'Seul un gérant peut créer son entreprise.');
+
+        abort_if($user->entrepriseGeree()->exists(), 422, 'Vous avez déjà une entreprise.');
+
+        $data = $request->validate([
+            'nom' => ['required', 'string', 'max:255'],
+        ]);
+
+        return \DB::transaction(function () use ($user, $data) {
+            $entreprise = $user->entrepriseGeree()->create([
+                'nom' => $data['nom'],
+                'actif' => true,
+                'acompte_pct' => 50,
+            ]);
+
+            return response()->json([
+                'message' => 'Entreprise créée.',
+                'entreprise' => [
+                    'id' => $entreprise->id,
+                    'nom' => $entreprise->nom,
+                    'acompte_pct' => $entreprise->acompte_pct,
+                ],
+            ], 201);
+        });
+    }
+
     /** [GERANT] Modifier les paramètres de paiement (acompte). */
     public function updateSettings(Request $request, Entreprise $entreprise)
     {

@@ -8,45 +8,51 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use RuntimeException;
 
-class FacebookMessengerService
+class InstagramService
 {
     private const GRAPH_API = 'https://graph.facebook.com/v19.0';
 
     /**
-     * Vérifie le token de la page, récupère son nom, puis crée/met à jour le canal.
+     * Vérifie le token Instagram, récupère le nom d'utilisateur, puis crée/met à jour le canal.
+     *
+     * Le token doit porter les permissions instagram_manage_messages (et instagram_basic).
+     * On accepte en entrée le @username ou l'id du compte Instagram pro.
      */
-    public function connecter(int $entrepriseId, string $pageId, string $pageToken, ?string $appSecret = null): CanalEntreprise
+    public function connecter(int $entrepriseId, string $igUserId, string $accessToken, ?string $appSecret = null): CanalEntreprise
     {
-        $pageId = trim($pageId);
-        $pageToken = trim($pageToken);
+        $igUserId = trim($igUserId);
+        $accessToken = trim($accessToken);
         $appSecret = $appSecret !== null ? trim($appSecret) : null;
 
-        $response = Http::withToken($pageToken)
+        // Vérifie le token et récupère l'identité Instagram (id + username).
+        $response = Http::withToken($accessToken)
             ->timeout(15)
-            ->get(self::GRAPH_API . '/' . $pageId . '?fields=name,id');
+            ->get(self::GRAPH_API . '/' . $igUserId . '?fields=username,id');
 
         $data = $response->json();
 
         if (! $response->successful() || empty($data['id'])) {
             throw new RuntimeException(
-                "Page ID ou Access Token invalide. "
-                . ($data['error']['message'] ?? 'Reponse inattendue de l\'API Meta.')
+                "ID du compte Instagram ou Access Token invalide. "
+                . ($data['error']['message'] ?? 'Réponse inattendue de l\'API Meta.')
             );
         }
 
+        $igId = (string) $data['id'];
+
         $existant = CanalEntreprise::where('entreprise_id', $entrepriseId)
-            ->where('type', 'messenger')
-            ->where('bot_id', $pageId)
+            ->where('type', 'instagram')
+            ->where('bot_id', $igId)
             ->first();
 
         $appSecret = $appSecret ?: ($existant->app_secret ?? null);
         $webhookSecret = $existant ? $existant->webhook_secret : Str::random(40);
 
         $canal = CanalEntreprise::updateOrCreate(
-            ['entreprise_id' => $entrepriseId, 'type' => 'messenger', 'bot_id' => $pageId],
+            ['entreprise_id' => $entrepriseId, 'type' => 'instagram', 'bot_id' => $igId],
             [
-                'token' => $pageToken,
-                'bot_username' => $data['name'] ?? null,
+                'token' => $accessToken,
+                'bot_username' => $data['username'] ?? $data['id'],
                 'webhook_secret' => $webhookSecret,
                 'app_secret' => $appSecret ?: null,
                 'actif' => false,
@@ -65,8 +71,8 @@ class FacebookMessengerService
     }
 
     /**
-     * Abonne la page aux webhooks de l'application Meta (Messenger).
-     * Sans cet abonnement, Meta ne nous livre pas les messages entrants.
+     * Abonne le compte Instagram aux webhooks de l'application Meta afin que
+     * Meta nous livre les messages directs (DM).
      */
     public function abonnerWebhook(CanalEntreprise $canal): array
     {
@@ -93,7 +99,7 @@ class FacebookMessengerService
         ];
     }
 
-    /** Désabonne la page (meilleur effort, en silence). */
+    /** Désabonne le compte Instagram (meilleur effort, en silence). */
     public function desabonnerWebhook(CanalEntreprise $canal): void
     {
         try {
@@ -106,21 +112,21 @@ class FacebookMessengerService
     }
 
     /**
-     * Envoie un texte au client Messenger (PSID). Si un lien de paiement est
+     * Envoie un texte au client Instagram (ISGID). Si un lien de paiement est
      * fourni, on envoie en plus un template « generic » avec un bouton web_url.
      */
-    public function envoyerMessage(CanalEntreprise $canal, string $psid, string $texte, ?string $boutonUrl = null): array
+    public function envoyerMessage(CanalEntreprise $canal, string $isgid, string $texte, ?string $boutonUrl = null): array
     {
         $texte = mb_substr($texte, 0, 640);
 
-        $result = $this->envoyer($canal, $psid, ['text' => $texte]);
+        $result = $this->envoyer($canal, $isgid, ['text' => $texte]);
 
         if (! ($result['ok'] ?? false)) {
             return $result;
         }
 
         if ($boutonUrl) {
-            $this->envoyer($canal, $psid, [
+            $this->envoyer($canal, $isgid, [
                 'attachment' => [
                     'type' => 'template',
                     'payload' => [
@@ -146,21 +152,21 @@ class FacebookMessengerService
         return $result;
     }
 
-    private function envoyer(CanalEntreprise $canal, string $psid, array $message): array
+    private function envoyer(CanalEntreprise $canal, string $isgid, array $message): array
     {
         $response = Http::withToken($canal->token)
             ->timeout(30)
             ->connectTimeout(15)
             ->post(self::GRAPH_API . '/me/messages', [
-                'recipient' => ['id' => $psid],
+                'recipient' => ['id' => $isgid],
                 'message' => $message,
             ]);
 
         $data = $response->json();
 
         if (! $response->successful()) {
-            Log::warning('Messenger sendMessage refuse', [
-                'page_id' => $canal->bot_id,
+            Log::warning('Instagram sendMessage refuse', [
+                'ig_user_id' => $canal->bot_id,
                 'erreur' => $data['error']['message'] ?? 'Erreur inconnue',
             ]);
 
@@ -178,15 +184,15 @@ class FacebookMessengerService
     }
 
     /**
-     * Récupère le profil public d'un PSID (nom) via l'API Messenger.
+     * Récupère le profil public d'un ISGID (nom d'utilisateur) via l'API Messenger/Instagram.
      * Retourne null si indisponible.
      */
-    public function profilUser(string $token, string $psid): ?string
+    public function profilUser(string $token, string $isgid): ?string
     {
         try {
             $response = Http::withToken($token)
                 ->timeout(15)
-                ->get(self::GRAPH_API . '/' . $psid . '?fields=first_name,last_name,profile_pic');
+                ->get(self::GRAPH_API . '/' . $isgid . '?fields=username,profile_pic');
 
             if (! $response->successful()) {
                 return null;
@@ -194,19 +200,18 @@ class FacebookMessengerService
 
             $data = $response->json();
 
-            return trim(($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? '')) ?: null;
+            return $data['username'] ?? null;
         } catch (\Throwable $e) {
             return null;
         }
     }
 
     /**
-     * Télécharge l'image (preuve de paiement) reçue via Messenger.
+     * Télécharge l'image (preuve de paiement) reçue via Instagram DM.
      * Retourne le chemin relatif ou null en cas d'échec.
      */
     public function telechargerImage(string $token, string $url): ?string
     {
-        // L'URL fournie par Messenger accepte le token de page en paramètre.
         $image = Http::timeout(30)->get($url, ['access_token' => $token]);
 
         if (! $image->successful()) {
@@ -214,7 +219,7 @@ class FacebookMessengerService
         }
 
         if (! $image->successful()) {
-            Log::warning('Messenger telechargement image echoue', ['url' => mb_substr($url, 0, 120)]);
+            Log::warning('Instagram telechargement image echoue', ['url' => mb_substr($url, 0, 120)]);
             return null;
         }
 
