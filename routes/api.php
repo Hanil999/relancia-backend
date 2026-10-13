@@ -11,8 +11,10 @@ use App\Http\Controllers\FacturationController;
 use App\Http\Controllers\InvitationController;
 use App\Http\Controllers\InvitationGerantController;
 use App\Http\Controllers\ProduitController;
+use App\Http\Controllers\RechercheGlobaleController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\CommandeController;
+use App\Http\Controllers\ConversationUnifieeController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\FactureController;
 use App\Http\Controllers\MessageParserController;
@@ -66,6 +68,10 @@ Route::post('entreprises/{entreprise}/commandes/{commande}/paiements', [Paiement
 Route::get('entreprises/{entreprise}/commandes/{commande}/paiements', [PaiementController::class, 'index']);
 
 Route::post('entreprises/{entreprise}/commandes/{commande}/stripe/session', [\App\Http\Controllers\StripeController::class, 'creerSession']);
+
+Route::post('entreprises/{entreprise}/commandes/{commande}/goalpay/session', [\App\Http\Controllers\GoalpayController::class, 'creerSession']);
+Route::post('entreprises/{entreprise}/commandes/{commande}/goalpay/envoyer', [\App\Http\Controllers\GoalpayController::class, 'envoyerLien']);
+Route::post('entreprises/{entreprise}/commandes/{commande}/stripe/envoyer', [\App\Http\Controllers\StripeController::class, 'envoyerLien']);
 
 Route::patch('entreprises/{entreprise}/settings', [EntrepriseController::class, 'updateSettings']);
 
@@ -160,6 +166,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/entreprises/{entreprise}/canaux/instagram/conversations/{client}/messages', [InstagramController::class, 'messages']);
     Route::get('/entreprises/{entreprise}/canaux/instagram/produits', [InstagramController::class, 'produits']);
 
+    // --- Fil unifié (tous canaux mélangés, filtre ?canal=) ---
+    Route::get('/entreprises/{entreprise}/conversations', [ConversationUnifieeController::class, 'conversations']);
+    Route::get('/entreprises/{entreprise}/conversations/{client}/messages', [ConversationUnifieeController::class, 'messages']);
+
     // Accessible admin (concerné) + gérant propriétaire — filtré par la Policy
     Route::get('/entreprises/{entreprise}', [EntrepriseController::class, 'show']);
     Route::patch('/entreprises/{entreprise}', [EntrepriseController::class, 'update']);
@@ -199,6 +209,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/entreprises/{entreprise}/clients', [ClientController::class, 'index']);
     Route::get('/entreprises/{entreprise}/clients/{clientId}', [ClientController::class, 'show']);
 
+    // --- Recherche globale (clients, commandes, produits, catégories) ---
+    Route::get('/entreprises/{entreprise}/recherche', [RechercheGlobaleController::class, 'index']);
+
     // --- Facturation ---
     Route::get('/facturation/plateforme', [FacturationController::class, 'plateforme'])
         ->middleware('role:admin');
@@ -232,6 +245,9 @@ Route::post('/webhooks/instagram/{entreprise}/{secret}', [InstagramController::c
 
 // === STRIPE WEBHOOKS (PUBLIC, no auth) ===
 Route::post('/webhooks/stripe', [\App\Http\Controllers\StripeController::class, 'webhook']);
+
+// === GOALPAY WEBHOOK (PUBLIC, no auth) ===
+Route::post('/webhooks/goalpay', [\App\Http\Controllers\GoalpayController::class, 'webhook']);
 
 // === STRIPE RETURN (PUBLIC) : après paiement, le client est ramené sur son bot Telegram ===
 Route::get('/paiements/stripe/retour', [\App\Http\Controllers\StripeController::class, 'retour']);

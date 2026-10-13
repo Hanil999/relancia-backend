@@ -13,8 +13,8 @@ use App\Services\PaiementService;
 use App\Services\ReponseAutomatiqueService;
 use App\Services\TelegramService;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Str;
 use RuntimeException;
 
 class TelegramController extends Controller
@@ -104,7 +104,7 @@ class TelegramController extends Controller
 
         $clientIds = $derniers->pluck('client_id')->values()->all();
 
-        $dernieresCommandes = \App\Models\Commande::where('entreprise_id', $entreprise->id)
+        $dernieresCommandes = Commande::where('entreprise_id', $entreprise->id)
             ->whereIn('client_id', $clientIds)
             ->whereIn('canal', ['Telegram', 'Messenger', 'Instagram', 'WhatsApp'])
             ->latest()
@@ -141,7 +141,7 @@ class TelegramController extends Controller
             ->orderBy('created_at')
             ->get(['id', 'direction', 'texte', 'media_url', 'media_type', 'source', 'created_at']);
 
-        $commandes = \App\Models\Commande::where('entreprise_id', $entreprise->id)
+        $commandes = Commande::where('entreprise_id', $entreprise->id)
             ->where('client_id', $client->id)
             ->where('canal', 'Telegram')
             ->orderByDesc('created_at')
@@ -242,6 +242,7 @@ class TelegramController extends Controller
 
         if (! $canal || ! $canal->actif || $headerSecret !== $secret) {
             Log::warning('Webhook Telegram rejeté', ['entreprise_id' => $entrepriseId]);
+
             return response()->json(['ok' => false], 403);
         }
 
@@ -253,7 +254,7 @@ class TelegramController extends Controller
 
         $chatId = (string) $message['chat']['id'];
         $from = $message['from'] ?? [];
-        $nomClient = trim(($from['first_name'] ?? '') . ' ' . ($from['last_name'] ?? ''))
+        $nomClient = trim(($from['first_name'] ?? '').' '.($from['last_name'] ?? ''))
             ?: ($from['username'] ?? 'Client Telegram');
 
         $entreprise = Entreprise::find($entrepriseId);
@@ -277,6 +278,7 @@ class TelegramController extends Controller
         // --- PHOTO (preuve de paiement) ---
         if (! empty($message['photo'])) {
             $this->traiterPhotoPreuve($canal, $entreprise, $client, $chatId, $message);
+
             return response()->json(['ok' => true]);
         }
 
@@ -308,7 +310,13 @@ class TelegramController extends Controller
 
             Log::debug('Reponse auto generee', ['texte' => mb_substr($reponse['message'] ?? '', 0, 100)]);
 
-            $this->telegram->envoyerMessage($canal, $chatId, $reponse['message'], $reponse['lien_paiement'] ?? null);
+            $this->telegram->envoyerMessage(
+                $canal,
+                $chatId,
+                $reponse['message'],
+                $reponse['lien_paiement'] ?? null,
+                $reponse['lien_mobile_money'] ?? null,
+            );
 
             MessageCanal::create([
                 'entreprise_id' => $entreprise->id,
@@ -361,11 +369,12 @@ class TelegramController extends Controller
 
         if (! $cheminPhoto) {
             $this->envoyerReponse($canal, $chatId, $entreprise, $client, 'Image non reçue. Veuillez réessayer ou envoyer une capture d\'écran plus nette.');
+
             return;
         }
 
         // Mettre à jour le message avec l'URL de la photo
-        $mediaUrl = url('/storage/' . $cheminPhoto);
+        $mediaUrl = url('/storage/'.$cheminPhoto);
         $msgPhoto->update([
             'texte' => '[Photo — preuve de paiement]',
             'media_url' => $mediaUrl,
@@ -381,11 +390,12 @@ class TelegramController extends Controller
 
         if (! $derniereCommande) {
             $this->envoyerReponse($canal, $chatId, $entreprise, $client, 'Aucune commande en attente de paiement. Si vous souhaitez passer une commande, envoyez votre commande en texte.');
+
             return;
         }
 
         // 4. OCR — extraire le montant de la photo
-        $uploadedFile = new \Illuminate\Http\UploadedFile(
+        $uploadedFile = new UploadedFile(
             storage_path("app/public/{$cheminPhoto}"),
             basename($cheminPhoto),
             mime_content_type(storage_path("app/public/{$cheminPhoto}")),
@@ -416,8 +426,12 @@ class TelegramController extends Controller
         $matchTotal = false;
 
         foreach ($montants as $m) {
-            if (abs($m - $montantAttendu) < 1) $matchAcompte = true;
-            if (abs($m - $montantTotal) < 1) $matchTotal = true;
+            if (abs($m - $montantAttendu) < 1) {
+                $matchAcompte = true;
+            }
+            if (abs($m - $montantTotal) < 1) {
+                $matchTotal = true;
+            }
         }
 
         if (! empty($verification['texte']) && ($matchAcompte || $matchTotal)) {
@@ -435,20 +449,21 @@ class TelegramController extends Controller
 
             $montantFmt = number_format($montantAPayer, 0, ',', ' ');
             $reste = max(0, $montantTotal - (float) $derniereCommande->fresh()->montant_paye);
+            $items = $derniereCommande->items->map(fn ($i) => "{$i->quantite}x {$i->produit_nom}")->implode(', ');
 
-            $msg = "Paiement de {$montantFmt} Ar enregistré pour la commande {$derniereCommande->numero}.";
+            $msg = "Paiement de {$montantFmt} Ar enregistré pour votre commande de {$items}.";
             if ($reste > 0) {
                 $resteFmt = number_format($reste, 0, ',', ' ');
                 $msg .= " Il reste {$resteFmt} Ar à payer.";
             } else {
-                $msg .= " Commande intégralement payée !";
+                $msg .= ' Commande intégralement payée !';
             }
 
             $this->envoyerReponse($canal, $chatId, $entreprise, $client, $msg);
         } else {
             // Montant non reconnu ou ne correspond pas
             $detecteStr = ! empty($montants)
-                ? 'Montant(s) détecté(s) : ' . implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ') . ' Ar', $montants))
+                ? 'Montant(s) détecté(s) : '.implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ').' Ar', $montants))
                 : 'Aucun montant détecté sur l\'image.';
 
             $acompteFmt = number_format($montantAttendu, 0, ',', ' ');
@@ -460,8 +475,8 @@ class TelegramController extends Controller
                 $entreprise,
                 $client,
                 "Impossible de vérifier le montant automatiquement. {$detecteStr}\n"
-                . "Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
-                . "Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence."
+                ."Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
+                .'Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence.'
             );
         }
     }

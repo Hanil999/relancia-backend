@@ -13,6 +13,7 @@ use App\Services\PaiementService;
 use App\Services\ReponseAutomatiqueService;
 use App\Services\WhatsAppService;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
@@ -37,13 +38,19 @@ class WhatsAppController extends Controller
             return response()->json(['connecte' => false]);
         }
 
+        // « actif » ne dit que ce qui a été enregistré à la connexion. Un token
+        // peut expirer ensuite, d'où un contrôle en direct.
+        $sante = $this->whatsapp->verifierToken($canal);
+
         return response()->json([
             'connecte' => $canal->actif,
+            'token_valide' => $sante['ok'],
+            'token_erreur' => $sante['message'],
             'bot_username' => $canal->bot_username,
             'phone_number_id' => $canal->bot_id,
             'connecte_le' => $canal->connecte_le,
             'webhook_callback_url' => rtrim(config('app.url'), '/')
-                . "/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
+                ."/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
             'webhook_verify_token' => $canal->webhook_secret,
         ]);
     }
@@ -77,7 +84,7 @@ class WhatsAppController extends Controller
             'connecte' => true,
             'bot_username' => $canal->bot_username,
             'webhook_callback_url' => rtrim(config('app.url'), '/')
-                . "/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
+                ."/api/webhooks/whatsapp/{$entreprise->id}/{$canal->webhook_secret}",
             'webhook_verify_token' => $canal->webhook_secret,
             'webhook_subscribed' => $webhook['ok'],
             'webhook_message' => $webhook['message'],
@@ -141,7 +148,7 @@ class WhatsAppController extends Controller
 
         $clientIds = $derniers->pluck('client_id')->values()->all();
 
-        $dernieresCommandes = \App\Models\Commande::where('entreprise_id', $entreprise->id)
+        $dernieresCommandes = Commande::where('entreprise_id', $entreprise->id)
             ->whereIn('client_id', $clientIds)
             ->whereIn('canal', ['WhatsApp', 'Telegram', 'Messenger', 'Instagram'])
             ->latest()
@@ -176,7 +183,7 @@ class WhatsAppController extends Controller
             ->orderBy('created_at')
             ->get(['id', 'direction', 'texte', 'source', 'created_at']);
 
-        $commandes = \App\Models\Commande::where('entreprise_id', $entreprise->id)
+        $commandes = Commande::where('entreprise_id', $entreprise->id)
             ->where('client_id', $client->id)
             ->where('canal', 'WhatsApp')
             ->orderByDesc('created_at')
@@ -296,6 +303,7 @@ class WhatsAppController extends Controller
 
         if (! $canal || ! $canal->actif) {
             Log::warning('Webhook WhatsApp rejete', ['entreprise_id' => $entrepriseId]);
+
             return response()->json(['ok' => false], 403);
         }
 
@@ -307,6 +315,7 @@ class WhatsAppController extends Controller
             $rawBody = $request->getContent();
             if (! $this->whatsapp->verifierSignature($canal, $rawBody, $signature)) {
                 Log::warning('Signature WhatsApp invalide', ['entreprise_id' => $entrepriseId]);
+
                 return response()->json(['ok' => false], 403);
             }
         } else {
@@ -384,6 +393,7 @@ class WhatsAppController extends Controller
         // --- PHOTO (preuve de paiement) ---
         if ($type === 'image' && ! empty($msg['image']['id'])) {
             $this->traiterPhotoPreuve($canal, $entreprise, $client, $phoneFrom, $msg);
+
             return;
         }
 
@@ -419,6 +429,7 @@ class WhatsAppController extends Controller
                 $phoneFrom,
                 $reponse['message'],
                 $reponse['lien_paiement'] ?? null,
+                $reponse['lien_mobile_money'] ?? null,
             );
 
             // On affiche toujours la réponse dans la conversation, mais on
@@ -478,11 +489,12 @@ class WhatsAppController extends Controller
 
         if (! $cheminPhoto) {
             $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, 'Image non reçue. Veuillez réessayer ou envoyer une capture d\'écran plus nette.');
+
             return;
         }
 
         // Mettre à jour le message avec l'URL de la photo
-        $mediaUrl = url('/storage/' . $cheminPhoto);
+        $mediaUrl = url('/storage/'.$cheminPhoto);
         $msgPhoto->update([
             'texte' => '[Photo — preuve de paiement]',
             'media_url' => $mediaUrl,
@@ -498,11 +510,12 @@ class WhatsAppController extends Controller
 
         if (! $derniereCommande) {
             $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, 'Aucune commande en attente de paiement. Si vous souhaitez passer une commande, envoyez votre commande en texte.');
+
             return;
         }
 
         // 4. OCR — extraire le montant de la photo
-        $uploadedFile = new \Illuminate\Http\UploadedFile(
+        $uploadedFile = new UploadedFile(
             storage_path("app/public/{$cheminPhoto}"),
             basename($cheminPhoto),
             mime_content_type(storage_path("app/public/{$cheminPhoto}")),
@@ -533,8 +546,12 @@ class WhatsAppController extends Controller
         $matchTotal = false;
 
         foreach ($montants as $m) {
-            if (abs($m - $montantAttendu) < 1) $matchAcompte = true;
-            if (abs($m - $montantTotal) < 1) $matchTotal = true;
+            if (abs($m - $montantAttendu) < 1) {
+                $matchAcompte = true;
+            }
+            if (abs($m - $montantTotal) < 1) {
+                $matchTotal = true;
+            }
         }
 
         if (! empty($verification['texte']) && ($matchAcompte || $matchTotal)) {
@@ -552,20 +569,21 @@ class WhatsAppController extends Controller
 
             $montantFmt = number_format($montantAPayer, 0, ',', ' ');
             $reste = max(0, $montantTotal - (float) $derniereCommande->fresh()->montant_paye);
+            $items = $derniereCommande->items->map(fn ($i) => "{$i->quantite}x {$i->produit_nom}")->implode(', ');
 
-            $reponse = "Paiement de {$montantFmt} Ar enregistré pour la commande {$derniereCommande->numero}.";
+            $reponse = "Paiement de {$montantFmt} Ar enregistré pour votre commande de {$items}.";
             if ($reste > 0) {
                 $resteFmt = number_format($reste, 0, ',', ' ');
                 $reponse .= " Il reste {$resteFmt} Ar à payer.";
             } else {
-                $reponse .= " Commande intégralement payée !";
+                $reponse .= ' Commande intégralement payée !';
             }
 
             $this->envoyerReponse($canal, $phoneFrom, $entreprise, $client, $reponse);
         } else {
             // Montant non reconnu ou ne correspond pas
             $detecteStr = ! empty($montants)
-                ? 'Montant(s) détecté(s) : ' . implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ') . ' Ar', $montants))
+                ? 'Montant(s) détecté(s) : '.implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ').' Ar', $montants))
                 : 'Aucun montant détecté sur l\'image.';
 
             $acompteFmt = number_format($montantAttendu, 0, ',', ' ');
@@ -577,8 +595,8 @@ class WhatsAppController extends Controller
                 $entreprise,
                 $client,
                 "Impossible de vérifier le montant automatiquement. {$detecteStr}\n"
-                . "Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
-                . "Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence."
+                ."Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
+                .'Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence.'
             );
         }
     }

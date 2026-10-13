@@ -64,7 +64,7 @@ class TelegramService
         $canal->update(['actif' => false]);
     }
 
-    public function envoyerMessage(CanalEntreprise $canal, string|int $chatId, string $texte, ?string $boutonUrl = null): array
+    public function envoyerMessage(CanalEntreprise $canal, string|int $chatId, string $texte, ?string $boutonUrl = null, ?string $boutonUrlMobile = null): array
     {
         $params = [
             'chat_id' => $chatId,
@@ -73,12 +73,18 @@ class TelegramService
 
         // Si un lien est fourni, il est présenté dans un bouton cliquable
         // plutôt qu'une longue URL collée dans le texte.
+        $clavier = [];
+
         if ($boutonUrl) {
-            $params['reply_markup'] = [
-                'inline_keyboard' => [[
-                    ['text' => '💳 Payer par carte', 'url' => $boutonUrl],
-                ]],
-            ];
+            $clavier[] = [['text' => '💳 Payer par carte', 'url' => $boutonUrl]];
+        }
+
+        if ($boutonUrlMobile) {
+            $clavier[] = [['text' => '📱 Mobile Money', 'url' => $boutonUrlMobile]];
+        }
+
+        if ($clavier) {
+            $params['reply_markup'] = ['inline_keyboard' => $clavier];
         }
 
         $result = $this->call($canal->token, 'sendMessage', $params);

@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\CanalEntreprise;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -24,14 +25,14 @@ class WhatsAppService
         // Verify the token by fetching the object info
         $response = Http::withToken($accessToken)
             ->timeout(15)
-            ->get(self::GRAPH_API . '/' . $phoneNumberId);
+            ->get(self::GRAPH_API.'/'.$phoneNumberId);
 
         $data = $response->json();
 
         if (! $response->successful() || empty($data['id'])) {
             throw new RuntimeException(
-                "Phone Number ID ou Access Token invalide. "
-                . ($data['error']['message'] ?? 'Reponse inattendue de l\'API Meta.')
+                'Phone Number ID ou Access Token invalide. '
+                .($data['error']['message'] ?? 'Reponse inattendue de l\'API Meta.')
             );
         }
 
@@ -43,14 +44,14 @@ class WhatsAppService
         if (empty($data['display_phone_number'])) {
             $liste = Http::withToken($accessToken)
                 ->timeout(15)
-                ->get(self::GRAPH_API . '/' . $botId . '/phone_numbers');
+                ->get(self::GRAPH_API.'/'.$botId.'/phone_numbers');
 
             $numeros = $liste->json('data') ?? [];
 
             if (empty($numeros)) {
                 throw new RuntimeException(
-                    "Aucun numéro de téléphone trouvé sur ce WhatsApp Business Account. "
-                    . ($liste->json('error.message') ?? '')
+                    'Aucun numéro de téléphone trouvé sur ce WhatsApp Business Account. '
+                    .($liste->json('error.message') ?? '')
                 );
             }
 
@@ -94,6 +95,53 @@ class WhatsAppService
     }
 
     /**
+     * Vérifie que le token enregistré est encore valide.
+     *
+     * Appel en lecture seule : aucun message n'est envoyé. Sans ce contrôle,
+     * un token expiré laisse l'API renvoyer « connecte: true » pendant que
+     * chaque envoi échoue silencieusement.
+     *
+     * @return array{ok: bool, message: string|null}
+     */
+    public function verifierToken(CanalEntreprise $canal): array
+    {
+        if (! $canal->token || ! $canal->bot_id) {
+            return ['ok' => false, 'message' => 'Canal WhatsApp non configuré.'];
+        }
+
+        try {
+            $response = Http::withToken($canal->token)
+                ->timeout(10)
+                ->get(self::GRAPH_API.'/'.$canal->bot_id, [
+                    'fields' => 'id,verified_name,display_phone_number',
+                ]);
+        } catch (\Throwable $e) {
+            return ['ok' => false, 'message' => 'Meta injoignable : '.$e->getMessage()];
+        }
+
+        if ($response->successful()) {
+            return ['ok' => true, 'message' => null];
+        }
+
+        $erreur = $response->json('error') ?? [];
+
+        // Code 190 : toujours un problème de token (expiré, révoqué ou
+        // mal formé). On reformule, le texte brut de Meta n'est pas actionnable.
+        if (($erreur['code'] ?? null) === 190) {
+            return [
+                'ok' => false,
+                'message' => 'Token expiré ou révoqué. Régénérez un token permanent '
+                    .'(Utilisateur système Meta) puis reconnectez le canal.',
+            ];
+        }
+
+        return [
+            'ok' => false,
+            'message' => $erreur['message'] ?? "Réponse inattendue de l'API Meta.",
+        ];
+    }
+
+    /**
      * Abonne le numéro au webhook de l'application Meta afin que Meta nous
      * livre les messages entrants. Sans cet abonnement, le bot ne reçoit rien.
      */
@@ -105,7 +153,7 @@ class WhatsAppService
 
         $response = Http::withToken($canal->token)
             ->timeout(15)
-            ->post(self::GRAPH_API . '/' . $target . '/subscribed_apps', [
+            ->post(self::GRAPH_API.'/'.$target.'/subscribed_apps', [
                 'subscribed_fields' => 'messages',
             ]);
 
@@ -134,7 +182,7 @@ class WhatsAppService
 
             Http::withToken($canal->token)
                 ->timeout(15)
-                ->delete(self::GRAPH_API . '/' . $target . '/subscribed_apps');
+                ->delete(self::GRAPH_API.'/'.$target.'/subscribed_apps');
         } catch (\Throwable $e) {
             // Meilleur effort : on ne bloque pas la déconnexion.
         }
@@ -143,18 +191,36 @@ class WhatsAppService
     /**
      * Send a text message via WhatsApp Cloud API.
      *
-     * @param  CanalEntreprise  $canal
      * @param  string  $to  Phone number in international format (e.g. "261340000000")
-     * @param  string  $texte
      */
-    public function envoyerMessage(CanalEntreprise $canal, string $to, string $texte, ?string $boutonUrl = null): array
+    public function envoyerMessage(CanalEntreprise $canal, string $to, string $texte, ?string $boutonUrl = null, ?string $boutonUrlMobile = null): array
     {
         $phoneNumberId = $canal->bot_id;
         $accessToken = $canal->token;
 
         // Si un lien est fourni, il est présenté dans un bouton cliquable
         // (interactive) plutôt qu'une longue URL collée dans le texte.
+        $boutons = [];
+
         if ($boutonUrl) {
+            $boutons[] = [
+                'type' => 'url',
+                'text' => '💳 Payer par carte',
+                'url' => $boutonUrl,
+                'example' => [$boutonUrl],
+            ];
+        }
+
+        if ($boutonUrlMobile) {
+            $boutons[] = [
+                'type' => 'url',
+                'text' => '📱 Mobile Money',
+                'url' => $boutonUrlMobile,
+                'example' => [$boutonUrlMobile],
+            ];
+        }
+
+        if ($boutons) {
             $payload = [
                 'messaging_product' => 'whatsapp',
                 'recipient_type' => 'individual',
@@ -164,14 +230,7 @@ class WhatsAppService
                     'type' => 'button',
                     'header' => ['type' => 'text', 'text' => '💳 Paiement sécurisé'],
                     'body' => ['text' => mb_substr($texte, 0, 1024)],
-                    'action' => [
-                        'buttons' => [[
-                            'type' => 'url',
-                            'text' => '💳 Payer par carte',
-                            'url' => $boutonUrl,
-                            'example' => [$boutonUrl],
-                        ]],
-                    ],
+                    'action' => ['buttons' => $boutons],
                 ],
             ];
         } else {
@@ -187,7 +246,7 @@ class WhatsAppService
         $response = Http::withToken($accessToken)
             ->timeout(30)
             ->connectTimeout(15)
-            ->post(self::GRAPH_API . '/' . $phoneNumberId . '/messages', $payload);
+            ->post(self::GRAPH_API.'/'.$phoneNumberId.'/messages', $payload);
 
         $data = $response->json();
 
@@ -212,10 +271,11 @@ class WhatsAppService
         $info = Http::withToken($token)
             ->timeout(30)
             ->connectTimeout(15)
-            ->get(self::GRAPH_API . '/' . $mediaId);
+            ->get(self::GRAPH_API.'/'.$mediaId);
 
         if (! $info->successful()) {
             Log::warning('WhatsApp getMedia echoue', ['media_id' => $mediaId]);
+
             return null;
         }
 
@@ -235,6 +295,7 @@ class WhatsAppService
 
         if (! $image->successful()) {
             Log::warning('WhatsApp telechargement image echoue', ['media_id' => $mediaId]);
+
             return null;
         }
 
@@ -246,10 +307,10 @@ class WhatsAppService
             default => 'jpg',
         };
 
-        $filename = 'preuve_' . Str::random(20) . ".{$ext}";
+        $filename = 'preuve_'.Str::random(20).".{$ext}";
         $destPath = storage_path("app/public/paiements/{$filename}");
 
-        \Illuminate\Support\Facades\File::makeDirectory(dirname($destPath), 0755, true, true);
+        File::makeDirectory(dirname($destPath), 0755, true, true);
         file_put_contents($destPath, $image->body());
 
         return "paiements/{$filename}";
@@ -271,7 +332,7 @@ class WhatsAppService
             return false;
         }
 
-        $expected = 'sha256=' . hash_hmac('sha256', $rawBody, $appSecret);
+        $expected = 'sha256='.hash_hmac('sha256', $rawBody, $appSecret);
 
         return hash_equals($expected, $signature);
     }

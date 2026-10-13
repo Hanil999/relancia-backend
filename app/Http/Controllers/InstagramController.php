@@ -13,6 +13,7 @@ use App\Services\OcrService;
 use App\Services\PaiementService;
 use App\Services\ReponseAutomatiqueService;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
@@ -43,7 +44,7 @@ class InstagramController extends Controller
             'ig_user_id' => $canal->bot_id,
             'connecte_le' => $canal->connecte_le,
             'webhook_callback_url' => rtrim(config('app.url'), '/')
-                . "/api/webhooks/instagram/{$entreprise->id}/{$canal->webhook_secret}",
+                ."/api/webhooks/instagram/{$entreprise->id}/{$canal->webhook_secret}",
             'webhook_verify_token' => $canal->webhook_secret,
         ]);
     }
@@ -76,7 +77,7 @@ class InstagramController extends Controller
             'connecte' => true,
             'bot_username' => $canal->bot_username,
             'webhook_callback_url' => rtrim(config('app.url'), '/')
-                . "/api/webhooks/instagram/{$entreprise->id}/{$canal->webhook_secret}",
+                ."/api/webhooks/instagram/{$entreprise->id}/{$canal->webhook_secret}",
             'webhook_verify_token' => $canal->webhook_secret,
             'webhook_subscribed' => $webhook['ok'],
             'webhook_message' => $webhook['message'],
@@ -293,6 +294,7 @@ class InstagramController extends Controller
 
         if (! $canal || ! $canal->actif) {
             Log::warning('Webhook Instagram rejeté', ['entreprise_id' => $entrepriseId]);
+
             return response()->json(['ok' => false], 403);
         }
 
@@ -302,6 +304,7 @@ class InstagramController extends Controller
             $rawBody = $request->getContent();
             if (! $this->instagram->verifierSignature($canal->app_secret, $rawBody, $signature)) {
                 Log::warning('Signature Instagram invalide', ['entreprise_id' => $entrepriseId]);
+
                 return response()->json(['ok' => false], 403);
             }
         } else {
@@ -360,6 +363,7 @@ class InstagramController extends Controller
             foreach ($message['attachments'] as $attachement) {
                 if (($attachement['type'] ?? '') === 'image' && ! empty($attachement['payload']['url'])) {
                     $this->traiterPhotoPreuve($canal, $entreprise, $client, $isgid, $attachement['payload']['url'], $message['mid'] ?? null);
+
                     return;
                 }
             }
@@ -397,6 +401,7 @@ class InstagramController extends Controller
                 $isgid,
                 $reponse['message'],
                 $reponse['lien_paiement'] ?? null,
+                $reponse['lien_mobile_money'] ?? null,
             );
 
             MessageCanal::create([
@@ -451,10 +456,11 @@ class InstagramController extends Controller
 
         if (! $cheminPhoto) {
             $this->envoyerReponse($canal, $isgid, $entreprise, $client, 'Image non reçue. Veuillez réessayer ou envoyer une capture d\'écran plus nette.');
+
             return;
         }
 
-        $mediaUrlFinal = url('/storage/' . $cheminPhoto);
+        $mediaUrlFinal = url('/storage/'.$cheminPhoto);
         $msgPhoto->update([
             'texte' => '[Photo — preuve de paiement]',
             'media_url' => $mediaUrlFinal,
@@ -469,10 +475,11 @@ class InstagramController extends Controller
 
         if (! $derniereCommande) {
             $this->envoyerReponse($canal, $isgid, $entreprise, $client, 'Aucune commande en attente de paiement. Si vous souhaitez passer une commande, envoyez votre commande en texte.');
+
             return;
         }
 
-        $uploadedFile = new \Illuminate\Http\UploadedFile(
+        $uploadedFile = new UploadedFile(
             storage_path("app/public/{$cheminPhoto}"),
             basename($cheminPhoto),
             mime_content_type(storage_path("app/public/{$cheminPhoto}")),
@@ -502,8 +509,12 @@ class InstagramController extends Controller
         $matchTotal = false;
 
         foreach ($montants as $m) {
-            if (abs($m - $montantAttendu) < 1) $matchAcompte = true;
-            if (abs($m - $montantTotal) < 1) $matchTotal = true;
+            if (abs($m - $montantAttendu) < 1) {
+                $matchAcompte = true;
+            }
+            if (abs($m - $montantTotal) < 1) {
+                $matchTotal = true;
+            }
         }
 
         if (! empty($verification['texte']) && ($matchAcompte || $matchTotal)) {
@@ -520,19 +531,20 @@ class InstagramController extends Controller
 
             $montantFmt = number_format($montantAPayer, 0, ',', ' ');
             $reste = max(0, $montantTotal - (float) $derniereCommande->fresh()->montant_paye);
+            $items = $derniereCommande->items->map(fn ($i) => "{$i->quantite}x {$i->produit_nom}")->implode(', ');
 
-            $reponse = "Paiement de {$montantFmt} Ar enregistré pour la commande {$derniereCommande->numero}.";
+            $reponse = "Paiement de {$montantFmt} Ar enregistré pour votre commande de {$items}.";
             if ($reste > 0) {
                 $resteFmt = number_format($reste, 0, ',', ' ');
                 $reponse .= " Il reste {$resteFmt} Ar à payer.";
             } else {
-                $reponse .= " Commande intégralement payée !";
+                $reponse .= ' Commande intégralement payée !';
             }
 
             $this->envoyerReponse($canal, $isgid, $entreprise, $client, $reponse);
         } else {
             $detecteStr = ! empty($montants)
-                ? 'Montant(s) détecté(s) : ' . implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ') . ' Ar', $montants))
+                ? 'Montant(s) détecté(s) : '.implode(', ', array_map(fn ($m) => number_format($m, 0, ',', ' ').' Ar', $montants))
                 : 'Aucun montant détecté sur l\'image.';
 
             $acompteFmt = number_format($montantAttendu, 0, ',', ' ');
@@ -544,8 +556,8 @@ class InstagramController extends Controller
                 $entreprise,
                 $client,
                 "Impossible de vérifier le montant automatiquement. {$detecteStr}\n"
-                . "Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
-                . "Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence."
+                ."Montant attendu : {$acompteFmt} Ar (acompte) ou {$totalFmt} Ar (total).\n"
+                .'Veuillez effectuer le paiement par Mobile Money en incluant le numéro de commande dans la référence.'
             );
         }
     }

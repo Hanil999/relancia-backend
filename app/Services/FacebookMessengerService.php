@@ -109,7 +109,7 @@ class FacebookMessengerService
      * Envoie un texte au client Messenger (PSID). Si un lien de paiement est
      * fourni, on envoie en plus un template « generic » avec un bouton web_url.
      */
-    public function envoyerMessage(CanalEntreprise $canal, string $psid, string $texte, ?string $boutonUrl = null): array
+    public function envoyerMessage(CanalEntreprise $canal, string $psid, string $texte, ?string $boutonUrl = null, ?string $boutonUrlMobile = null): array
     {
         $texte = mb_substr($texte, 0, 640);
 
@@ -119,7 +119,25 @@ class FacebookMessengerService
             return $result;
         }
 
+        $boutons = [];
+
         if ($boutonUrl) {
+            $boutons[] = [
+                'type' => 'web_url',
+                'url' => $boutonUrl,
+                'title' => '💳 Payer par carte',
+            ];
+        }
+
+        if ($boutonUrlMobile) {
+            $boutons[] = [
+                'type' => 'web_url',
+                'url' => $boutonUrlMobile,
+                'title' => '📱 Mobile Money',
+            ];
+        }
+
+        if ($boutons) {
             $this->envoyer($canal, $psid, [
                 'attachment' => [
                     'type' => 'template',
@@ -127,16 +145,12 @@ class FacebookMessengerService
                         'template_type' => 'generic',
                         'elements' => [[
                             'title' => '💳 Paiement sécurisé',
-                            'subtitle' => 'Touchez le bouton pour régler par carte.',
+                            'subtitle' => 'Touchez un bouton pour régler votre commande.',
                             'default_action' => [
                                 'type' => 'web_url',
-                                'url' => $boutonUrl,
+                                'url' => $boutons[0]['url'],
                             ],
-                            'buttons' => [[
-                                'type' => 'web_url',
-                                'url' => $boutonUrl,
-                                'title' => '💳 Payer par carte',
-                            ]],
+                            'buttons' => $boutons,
                         ]],
                     ],
                 ],

@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Commande;
 use App\Models\Entreprise;
 use App\Models\Paiement;
+use App\Services\LienPaiementService;
 use App\Services\StripeService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -12,8 +13,10 @@ use Illuminate\Support\Facades\Storage;
 
 class StripeController extends Controller
 {
-    public function __construct(private readonly StripeService $stripe)
-    {
+    public function __construct(
+        private readonly StripeService $stripe,
+        private readonly LienPaiementService $liens,
+    ) {
     }
 
     /**
@@ -48,6 +51,41 @@ class StripeController extends Controller
         }
 
         return response()->json($session);
+    }
+
+    /**
+     * POST /entreprises/{entreprise}/commandes/{commande}/stripe/envoyer
+     * Body: { "montant": 50000 }
+     * Crée la session ET envoie le lien carte au client dans sa discussion
+     * d'origine (Telegram, WhatsApp, Messenger ou Instagram).
+     */
+    public function envoyerLien(Request $request, Entreprise $entreprise, Commande $commande): JsonResponse
+    {
+        $this->authorize('gererCommandes', $entreprise);
+        abort_if($commande->entreprise_id !== $entreprise->id, 404);
+
+        $data = $request->validate([
+            'montant' => ['required', 'numeric', 'min:0.01'],
+        ]);
+
+        $montant = (float) $data['montant'];
+        $reste = (float) $commande->reste_a_payer;
+
+        if ($montant > $reste + 0.01) {
+            return response()->json(['message' => "Le montant dépasse le reste à payer ({$reste} Ar)."], 422);
+        }
+
+        if (! $this->stripe->estConfigure()) {
+            return response()->json(['message' => 'Paiement par carte non disponible pour le moment.'], 503);
+        }
+
+        try {
+            $resultat = $this->liens->envoyerStripe($commande, $montant);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 502);
+        }
+
+        return response()->json($resultat, $resultat['envoye'] ? 201 : 422);
     }
 
     /**
