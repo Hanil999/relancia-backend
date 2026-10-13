@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Models\Client;
+use App\Models\Commande;
 use App\Models\Entreprise;
 use App\Models\Produit;
 use App\Models\User;
+use App\Services\PaiementService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
@@ -48,6 +50,19 @@ class GestionStockTest extends TestCase
         return $client;
     }
 
+    /**
+     * Enregistre l'acompte : la confirmation d'une commande l'exige
+     * (CommandeService::changerStatut). Sans paiement, le 422 est attendu.
+     */
+    private function payerAcompte(Commande $commande): void
+    {
+        app(PaiementService::class)->enregistrerPaiement(
+            $commande,
+            (float) $commande->montant_total * ($commande->entreprise->acompte_pct ?? 50) / 100,
+            'especes',
+        );
+    }
+
     public function test_le_stock_est_preleve_a_la_confirmation_pas_a_la_creation(): void
     {
         [$gerant, $entreprise] = $this->gerantAvecEntreprise();
@@ -67,7 +82,9 @@ class GestionStockTest extends TestCase
 
         $commande = $entreprise->commandes()->first();
 
-        // Confirmation : stock prélevé.
+        // Confirmation : l'acompte est requis avant de pouvoir confirmer.
+        $this->payerAcompte($commande);
+
         $this->actingAs($gerant, 'sanctum')
             ->patchJson("/api/auth/entreprises/{$entreprise->id}/commandes/{$commande->id}/statut", [
                 'statut' => 'confirmee',
@@ -127,6 +144,10 @@ class GestionStockTest extends TestCase
 
         $commande = $entreprise->commandes()->first();
 
+        // L'acompte est versé pour atteindre le controle de stock, qui est
+        // verifie juste apres dans CommandeService::changerStatut.
+        $this->payerAcompte($commande);
+
         $this->actingAs($gerant, 'sanctum')
             ->patchJson("/api/auth/entreprises/{$entreprise->id}/commandes/{$commande->id}/statut", [
                 'statut' => 'confirmee',
@@ -152,6 +173,8 @@ class GestionStockTest extends TestCase
             ->assertStatus(201);
 
         $commande = $entreprise->commandes()->first();
+
+        $this->payerAcompte($commande);
 
         $this->actingAs($gerant, 'sanctum')
             ->patchJson("/api/auth/entreprises/{$entreprise->id}/commandes/{$commande->id}/statut", [

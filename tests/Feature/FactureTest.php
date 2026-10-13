@@ -6,6 +6,7 @@ use App\Models\Client;
 use App\Models\Entreprise;
 use App\Models\Produit;
 use App\Models\User;
+use App\Services\PaiementService;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Storage;
 use Spatie\Permission\Models\Role;
@@ -52,6 +53,14 @@ class FactureTest extends TestCase
             ->assertStatus(201);
 
         $commande = $entreprise->commandes()->firstOrFail();
+
+        // L'acompte est prealable a la confirmation (CommandeService::changerStatut),
+        // et la facture est generee par cette meme confirmation.
+        app(PaiementService::class)->enregistrerPaiement(
+            $commande,
+            (float) $commande->montant_total * ($entreprise->acompte_pct ?? 50) / 100,
+            'especes',
+        );
 
         $this->actingAs($gerant, 'sanctum')
             ->patchJson("/api/auth/entreprises/{$entreprise->id}/commandes/{$commande->id}/statut", [

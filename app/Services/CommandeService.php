@@ -20,8 +20,7 @@ class CommandeService
         private readonly NotificationService $notifications,
         private readonly InvoiceService $invoices,
         private readonly TelegramService $telegram,
-    ) {
-    }
+    ) {}
 
     /**
      * Cœur de l'automatisation : transforme un message client en commande.
@@ -321,11 +320,12 @@ class CommandeService
         $items = $commande->items->map(fn ($i) => "{$i->quantite}x {$i->produit_nom}")->implode(', ');
         $montant = number_format((float) $commande->montant_total, 0, ',', ' ');
         $boutonUrl = null;
+        $boutonUrlMobile = null;
 
         $texte = match ($statut) {
-            'confirmee' => "Votre commande {$commande->numero} est confirmée ! ({$items} — {$montant} Ar). Préparation en cours.",
-            'annulee' => "Votre commande {$commande->numero} a été annulée.",
-            'livree' => "Votre commande {$commande->numero} a été livrée.",
+            'confirmee' => "Votre commande est confirmée ! ({$items} — {$montant} Ar). Préparation en cours.",
+            'annulee' => "Votre commande de {$items} a été annulée.",
+            'livree' => "Votre commande de {$items} a été livrée.",
             default => null,
         };
 
@@ -336,7 +336,7 @@ class CommandeService
         if ($statut === 'livree') {
             $reste = (float) $commande->reste_a_payer;
             if ($reste > 0) {
-                $texte .= "\n\nSolde restant à régler : " . number_format($reste, 0, ',', ' ') . " Ar.";
+                $texte .= "\n\nSolde restant à régler : ".number_format($reste, 0, ',', ' ').' Ar.';
                 try {
                     $stripe = app(StripeService::class);
                     if ($stripe->estConfigure()) {
@@ -346,13 +346,23 @@ class CommandeService
                 } catch (\Throwable) {
                     $boutonUrl = null;
                 }
+
+                try {
+                    $goalpay = app(GoalpayService::class);
+                    if ($goalpay->estConfigure()) {
+                        $sessionGoalpay = $goalpay->creerSessionCheckout($commande, $reste);
+                        $boutonUrlMobile = $sessionGoalpay['url'];
+                    }
+                } catch (\Throwable) {
+                    $boutonUrlMobile = null;
+                }
             } else {
                 $texte .= "\n\nCommande intégralement réglée. Merci !";
             }
         }
 
         try {
-            $this->telegram->envoyerMessage($canal, $chatId, $texte, $boutonUrl);
+            $this->telegram->envoyerMessage($canal, $chatId, $texte, $boutonUrl, $boutonUrlMobile);
 
             MessageCanal::create([
                 'entreprise_id' => $commande->entreprise_id,

@@ -19,7 +19,7 @@ class ClientController extends Controller
         $this->authorize('voirCommandes', $entreprise);
 
         $clients = $entreprise->clients()
-            ->when($request->search, fn ($q, $s) => $q->where('nom', 'like', "%{$s}%"))
+            ->when($request->search, fn ($q, $s) => $q->whereRaw('LOWER(nom) LIKE ?', ['%' . strtolower($s) . '%']))
             ->withCount('commandes')
             ->latest()
             ->paginate($request->integer('per_page', 20));

@@ -25,10 +25,14 @@ class CommandeController extends Controller
             ->when($request->boolean('archives'), fn ($q) => $q->onlyTrashed())
             ->when($request->statut, fn ($q, $s) => $q->where('statut', $s))
             ->when($request->canal, fn ($q, $c) => $q->where('canal', $c))
-            ->when($request->recherche, fn ($q, $r) => $q->whereHas(
-                'client',
-                fn ($cq) => $cq->where('nom', 'like', "%{$r}%")
-            ))
+            ->when($request->recherche, fn ($q, $r) => $q->where(function ($sq) use ($r) {
+                $t = strtolower($r);
+                $sq->whereRaw('LOWER(numero) LIKE ?', ["%{$t}%"])
+                    ->orWhereHas(
+                        'client',
+                        fn ($cq) => $cq->whereRaw('LOWER(nom) LIKE ?', ["%{$t}%"])
+                    );
+            }))
             ->with(['client', 'items', 'facture', 'paiements'])
             ->latest()
             ->paginate($request->integer('per_page', 20));
@@ -49,6 +53,7 @@ class CommandeController extends Controller
     'Messenger' => 'facebook',
     'Instagram' => 'instagram',
     'WhatsApp' => 'whatsapp',
+    'Telegram' => 'telegram',
     default => 'autre',
 };
 
