@@ -16,6 +16,7 @@ class Paiement extends Model
         'idempotency_key',
         'stripe_session_id',
         'stripe_payment_intent_id',
+        'goalpay_order_reference',
         'commission_relancia',
         'commission_pct',
         'montant_reverse',

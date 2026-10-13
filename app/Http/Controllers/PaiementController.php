@@ -32,7 +32,7 @@ class PaiementController extends Controller
 
         $data = $request->validate([
             'montant' => ['required', 'numeric', 'min:0.01'],
-            'methode' => ['required', 'in:especes,mobile_money,carte,virement,stripe'],
+            'methode' => ['required', 'in:especes'],
             'reference' => ['nullable', 'string', 'max:255'],
             'preuve_image' => ['nullable', 'image', 'max:5120'],
             'idempotency_key' => ['nullable', 'string', 'max:191'],
