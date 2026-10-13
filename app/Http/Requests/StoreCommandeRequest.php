@@ -17,7 +17,7 @@ class StoreCommandeRequest extends FormRequest
             'client_id' => ['nullable', 'exists:clients,id'],
             'client_nom' => ['required_without:client_id', 'string', 'max:255'],
             'client_telephone' => ['nullable', 'string', 'max:30'],
-            'canal' => ['sometimes', 'in:Messenger,Instagram,WhatsApp,Manuel'],
+            'canal' => ['sometimes', 'in:Messenger,WhatsApp,Manuel'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.produit_id' => ['required', 'exists:produits,id'],
             'items.*.quantite' => ['required', 'integer', 'min:1'],

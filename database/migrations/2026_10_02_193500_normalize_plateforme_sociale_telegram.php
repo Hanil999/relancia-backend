@@ -20,7 +20,7 @@ return new class extends Migration
 
         DB::statement('UPDATE client_entreprise SET plateforme_sociale = lower(plateforme_sociale)');
 
-        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'instagram'::character varying, 'whatsapp'::character varying, 'telegram'::character varying, 'autre'::character varying]::text[]))");
+        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'whatsapp'::character varying, 'telegram'::character varying, 'autre'::character varying]::text[]))");
     }
 
     public function down(): void
@@ -29,6 +29,6 @@ return new class extends Migration
 
         DB::statement("UPDATE client_entreprise SET plateforme_sociale = 'Telegram' WHERE plateforme_sociale = 'telegram'");
 
-        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'instagram'::character varying, 'whatsapp'::character varying, 'Telegram'::character varying, 'autre'::character varying]::text[]))");
+        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'whatsapp'::character varying, 'Telegram'::character varying, 'autre'::character varying]::text[]))");
     }
 };

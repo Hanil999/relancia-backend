@@ -142,7 +142,7 @@ class FacebookMessengerController extends Controller
 
         $dernieresCommandes = Commande::where('entreprise_id', $entreprise->id)
             ->whereIn('client_id', $clientIds)
-            ->whereIn('canal', ['Telegram', 'WhatsApp', 'Messenger', 'Instagram'])
+            ->whereIn('canal', ['Telegram', 'WhatsApp', 'Messenger'])
             ->latest()
             ->get()
             ->keyBy('client_id');

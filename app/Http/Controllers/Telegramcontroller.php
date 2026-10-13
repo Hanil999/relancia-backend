@@ -106,7 +106,7 @@ class TelegramController extends Controller
 
         $dernieresCommandes = Commande::where('entreprise_id', $entreprise->id)
             ->whereIn('client_id', $clientIds)
-            ->whereIn('canal', ['Telegram', 'Messenger', 'Instagram', 'WhatsApp'])
+            ->whereIn('canal', ['Telegram', 'Messenger', 'WhatsApp'])
             ->latest()
             ->get()
             ->keyBy('client_id');

@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Log;
 /**
  * Envoie un lien de paiement (Stripe / GoalPay) au client dans la discussion
  * d'origine de la commande, quel que soit le canal (Telegram, WhatsApp,
- * Messenger, Instagram).
+ * Messenger).
  *
  * Le canal est déduit de la commande, puis de la dernière conversation
  * connue du client. Le message est journalisé dans messages_canal afin
@@ -24,14 +24,12 @@ class LienPaiementService
         'Telegram' => 'telegram',
         'WhatsApp' => 'whatsapp',
         'Messenger' => 'messenger',
-        'Instagram' => 'instagram',
     ];
 
     public function __construct(
         private readonly TelegramService $telegram,
         private readonly WhatsAppService $whatsapp,
         private readonly FacebookMessengerService $messenger,
-        private readonly InstagramService $instagram,
     ) {}
 
     /**
@@ -99,7 +97,6 @@ class LienPaiementService
                 'Telegram' => $this->telegram->envoyerMessage($connexion, $conversationId, $texte, $lienCarte, $lienMobile),
                 'WhatsApp' => $this->whatsapp->envoyerMessage($connexion, $conversationId, $texte, $lienCarte, $lienMobile),
                 'Messenger' => $this->messenger->envoyerMessage($connexion, $conversationId, $texte, $lienCarte, $lienMobile),
-                'Instagram' => $this->instagram->envoyerMessage($connexion, $conversationId, $texte, $lienCarte, $lienMobile),
             };
 
             if (! ($result['ok'] ?? false)) {
@@ -206,7 +203,7 @@ class LienPaiementService
     }
 
     /**
-     * conversation_id = identifiant réel côté canal (chat_id, PSID, IGID,
+     * conversation_id = identifiant réel côté canal (chat_id, PSID,
      * numéro de téléphone). On privilégie l'identifiant stocké au moment des
      * échanges, puis le pivot client_entreprise.
      */
@@ -227,7 +224,7 @@ class LienPaiementService
             ->where('entreprises.id', $commande->entreprise_id)
             ->first()?->pivot;
 
-        $plateforme = ['Telegram' => 'telegram', 'WhatsApp' => 'whatsapp', 'Messenger' => 'facebook', 'Instagram' => 'instagram'][$libelle] ?? null;
+        $plateforme = ['Telegram' => 'telegram', 'WhatsApp' => 'whatsapp', 'Messenger' => 'facebook'][$libelle] ?? null;
 
         if ($plateforme && ($pivot?->plateforme_sociale === $plateforme) && $pivot?->identifiant_social) {
             return (string) $pivot->identifiant_social;

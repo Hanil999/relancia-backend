@@ -11,7 +11,7 @@ use App\Services\NotificationService;
 
 /**
  * Point d'entrée de l'automatisation : reçoit le texte d'un message client
- * (Messenger/Instagram/WhatsApp) et tente d'en extraire une commande complète,
+ * (Messenger/WhatsApp) et tente d'en extraire une commande complète,
  * sans aucune saisie du commerçant.
  */
 class MessageParserController extends Controller

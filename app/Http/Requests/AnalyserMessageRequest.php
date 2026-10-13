@@ -15,7 +15,7 @@ class AnalyserMessageRequest extends FormRequest
     {
         return [
             'message' => ['required', 'string', 'max:2000'],
-            'canal' => ['required', 'in:Messenger,Instagram,WhatsApp'],
+            'canal' => ['required', 'in:Messenger,WhatsApp'],
             'client_id' => ['nullable', 'exists:clients,id'],
             'client_nom' => ['required_without:client_id', 'string', 'max:255'],
             'client_identifiant_externe' => ['nullable', 'string', 'max:255'],

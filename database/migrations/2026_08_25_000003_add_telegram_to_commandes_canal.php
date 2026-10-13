@@ -11,7 +11,7 @@ return new class extends Migration
     {
         Schema::table('commandes', function (Blueprint $table) {
             DB::statement("ALTER TABLE commandes DROP CONSTRAINT commandes_canal_check");
-            DB::statement("ALTER TABLE commandes ADD CONSTRAINT commandes_canal_check CHECK (canal IN ('Messenger', 'Instagram', 'WhatsApp', 'Telegram', 'Manuel'))");
+            DB::statement("ALTER TABLE commandes ADD CONSTRAINT commandes_canal_check CHECK (canal IN ('Messenger', 'WhatsApp', 'Telegram', 'Manuel'))");
         });
     }
 
@@ -19,7 +19,7 @@ return new class extends Migration
     {
         Schema::table('commandes', function (Blueprint $table) {
             DB::statement("ALTER TABLE commandes DROP CONSTRAINT commandes_canal_check");
-            DB::statement("ALTER TABLE commandes ADD CONSTRAINT commandes_canal_check CHECK (canal IN ('Messenger', 'Instagram', 'WhatsApp', 'Manuel'))");
+            DB::statement("ALTER TABLE commandes ADD CONSTRAINT commandes_canal_check CHECK (canal IN ('Messenger', 'WhatsApp', 'Manuel'))");
         });
     }
 };

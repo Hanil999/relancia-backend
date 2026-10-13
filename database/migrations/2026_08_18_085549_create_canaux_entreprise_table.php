@@ -12,7 +12,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('entreprise_id')->constrained()->cascadeOnDelete();
 
-            // "telegram", plus tard "messenger", "whatsapp", "instagram" si vous unifiez
+            // "telegram", puis "messenger" et "whatsapp"
             $table->string('type');
 
             // Token du bot Telegram (chiffré via le cast Eloquent 'encrypted')

@@ -57,7 +57,7 @@ class StripeController extends Controller
      * POST /entreprises/{entreprise}/commandes/{commande}/stripe/envoyer
      * Body: { "montant": 50000 }
      * Crée la session ET envoie le lien carte au client dans sa discussion
-     * d'origine (Telegram, WhatsApp, Messenger ou Instagram).
+     * d'origine (Telegram, WhatsApp ou Messenger).
      */
     public function envoyerLien(Request $request, Entreprise $entreprise, Commande $commande): JsonResponse
     {

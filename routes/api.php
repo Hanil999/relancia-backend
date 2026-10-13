@@ -24,7 +24,6 @@ use App\Http\Controllers\StockController;
 use App\Http\Controllers\TelegramController;
 use App\Http\Controllers\WhatsAppController;
 use App\Http\Controllers\FacebookMessengerController;
-use App\Http\Controllers\InstagramController;
 
 /*
 |--------------------------------------------------------------------------
@@ -156,16 +155,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/entreprises/{entreprise}/canaux/messenger/conversations/{client}/messages', [FacebookMessengerController::class, 'messages']);
     Route::get('/entreprises/{entreprise}/canaux/messenger/produits', [FacebookMessengerController::class, 'produits']);
 
-    // === INSTAGRAM ROUTES (authenticated) ===
-    Route::get('/entreprises/{entreprise}/canaux/instagram', [InstagramController::class, 'show']);
-    Route::post('/entreprises/{entreprise}/canaux/instagram', [InstagramController::class, 'store']);
-    Route::delete('/entreprises/{entreprise}/canaux/instagram', [InstagramController::class, 'destroy']);
-    Route::post('/entreprises/{entreprise}/canaux/instagram/envoyer', [InstagramController::class, 'envoyer']);
-    Route::post('/entreprises/{entreprise}/canaux/instagram/abonner', [InstagramController::class, 'abonner']);
-    Route::get('/entreprises/{entreprise}/canaux/instagram/conversations', [InstagramController::class, 'conversations']);
-    Route::get('/entreprises/{entreprise}/canaux/instagram/conversations/{client}/messages', [InstagramController::class, 'messages']);
-    Route::get('/entreprises/{entreprise}/canaux/instagram/produits', [InstagramController::class, 'produits']);
-
     // --- Fil unifié (tous canaux mélangés, filtre ?canal=) ---
     Route::get('/entreprises/{entreprise}/conversations', [ConversationUnifieeController::class, 'conversations']);
     Route::get('/entreprises/{entreprise}/conversations/{client}/messages', [ConversationUnifieeController::class, 'messages']);
@@ -238,10 +227,6 @@ Route::post('/webhooks/whatsapp/{entreprise}/{secret}', [WhatsAppController::cla
 // === FACEBOOK MESSENGER WEBHOOKS (PUBLIC, no auth) ===
 Route::get('/webhooks/messenger/{entreprise}/{secret}', [FacebookMessengerController::class, 'challenge']);
 Route::post('/webhooks/messenger/{entreprise}/{secret}', [FacebookMessengerController::class, 'webhook']);
-
-// === INSTAGRAM DM WEBHOOKS (PUBLIC, no auth) ===
-Route::get('/webhooks/instagram/{entreprise}/{secret}', [InstagramController::class, 'challenge']);
-Route::post('/webhooks/instagram/{entreprise}/{secret}', [InstagramController::class, 'webhook']);
 
 // === STRIPE WEBHOOKS (PUBLIC, no auth) ===
 Route::post('/webhooks/stripe', [\App\Http\Controllers\StripeController::class, 'webhook']);

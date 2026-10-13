@@ -542,7 +542,7 @@ class ReponseAutomatiqueService
             return '';
         }
 
-        return in_array($canal, ['Telegram', 'WhatsApp', 'Messenger', 'Instagram'])
+        return in_array($canal, ['Telegram', 'WhatsApp', 'Messenger'])
             ? "• 💳 Carte bancaire (en ligne) : touchez le bouton « 💳 Payer par carte » ci-dessous\n"
             : "• 💳 Carte bancaire (en ligne) : {$lien}\n";
     }
@@ -556,7 +556,7 @@ class ReponseAutomatiqueService
             return '';
         }
 
-        return in_array($canal, ['Telegram', 'WhatsApp', 'Messenger', 'Instagram'])
+        return in_array($canal, ['Telegram', 'WhatsApp', 'Messenger'])
             ? "• 📱 Mobile Money (MVola, Airtel Money, Orange Money) : touchez le bouton « 📱 Payer par Mobile Money » ci-dessous\n"
             : "• 📱 Mobile Money (MVola, Airtel Money, Orange Money) : {$lien}\n";
     }

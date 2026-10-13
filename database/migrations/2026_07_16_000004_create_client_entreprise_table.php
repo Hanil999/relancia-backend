@@ -12,8 +12,8 @@ return new class extends Migration
             $table->id();
             $table->foreignId('client_id')->constrained('clients')->cascadeOnDelete();
             $table->foreignId('entreprise_id')->constrained('entreprises')->cascadeOnDelete();
-            $table->enum('plateforme_sociale', ['facebook', 'instagram', 'whatsapp', 'autre'])->default('autre');
-            $table->string('identifiant_social')->nullable(); // psid / instagram id / numero whatsapp
+            $table->enum('plateforme_sociale', ['facebook', 'whatsapp', 'autre'])->default('autre');
+            $table->string('identifiant_social')->nullable(); // psid / numero whatsapp
             $table->timestamp('premier_contact_le')->nullable();
             $table->timestamps();
 

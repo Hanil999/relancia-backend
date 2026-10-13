@@ -13,7 +13,7 @@ return new class extends Migration
             $table->foreignId('entreprise_id')->constrained()->cascadeOnDelete();
             $table->foreignId('client_id')->constrained()->restrictOnDelete();
             $table->string('numero')->unique();
-            $table->enum('canal', ['Messenger', 'Instagram', 'WhatsApp', 'Manuel'])->default('Manuel');
+            $table->enum('canal', ['Messenger', 'WhatsApp', 'Manuel'])->default('Manuel');
             $table->enum('statut', ['en_attente', 'confirmee', 'expediee', 'livree', 'annulee'])->default('en_attente');
             $table->decimal('montant_total', 12, 2)->default(0);
             $table->text('message_origine')->nullable();

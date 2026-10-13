@@ -51,7 +51,6 @@ class CommandeController extends Controller
 
        $plateforme = match ($data['canal'] ?? 'Manuel') {
     'Messenger' => 'facebook',
-    'Instagram' => 'instagram',
     'WhatsApp' => 'whatsapp',
     'Telegram' => 'telegram',
     default => 'autre',

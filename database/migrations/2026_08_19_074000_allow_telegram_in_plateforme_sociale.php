@@ -18,7 +18,7 @@ return new class extends Migration
         });
 
         DB::statement("ALTER TABLE client_entreprise DROP CONSTRAINT client_entreprise_plateforme_sociale_check");
-        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'instagram'::character varying, 'whatsapp'::character varying, 'telegram'::character varying, 'autre'::character varying]::text[]))");
+        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'whatsapp'::character varying, 'telegram'::character varying, 'autre'::character varying]::text[]))");
 
         Schema::table('client_entreprise', function (Blueprint $table) {
             $table->unique(['client_id', 'entreprise_id', 'plateforme_sociale']);
@@ -37,7 +37,7 @@ return new class extends Migration
         });
 
         DB::statement("ALTER TABLE client_entreprise DROP CONSTRAINT client_entreprise_plateforme_sociale_check");
-        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'instagram'::character varying, 'whatsapp'::character varying, 'autre'::character varying]::text[]))");
+        DB::statement("ALTER TABLE client_entreprise ADD CONSTRAINT client_entreprise_plateforme_sociale_check CHECK (plateforme_sociale::text = ANY (ARRAY['facebook'::character varying, 'whatsapp'::character varying, 'autre'::character varying]::text[]))");
 
         Schema::table('client_entreprise', function (Blueprint $table) {
             $table->unique(['client_id', 'entreprise_id', 'plateforme_sociale']);

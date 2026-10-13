@@ -150,7 +150,7 @@ class WhatsAppController extends Controller
 
         $dernieresCommandes = Commande::where('entreprise_id', $entreprise->id)
             ->whereIn('client_id', $clientIds)
-            ->whereIn('canal', ['WhatsApp', 'Telegram', 'Messenger', 'Instagram'])
+            ->whereIn('canal', ['WhatsApp', 'Telegram', 'Messenger'])
             ->latest()
             ->get()
             ->keyBy('client_id');

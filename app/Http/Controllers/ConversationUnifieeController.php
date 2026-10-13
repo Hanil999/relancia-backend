@@ -10,12 +10,12 @@ use Illuminate\Http\Request;
 
 /**
  * Fil de conversation unifié : mélange les messages de tous les canaux
- * (WhatsApp, Telegram, Messenger, Instagram) pour un même client,
+ * (WhatsApp, Telegram, Messenger) pour un même client,
  * avec possibilité de filtrer par canal via le paramètre ?canal=.
  */
 class ConversationUnifieeController extends Controller
 {
-    private const CANAUX = ['WhatsApp', 'Telegram', 'Messenger', 'Instagram'];
+    private const CANAUX = ['WhatsApp', 'Telegram', 'Messenger'];
 
     /** GET /entreprises/{entreprise}/conversations?canal= */
     public function conversations(Request $request, Entreprise $entreprise)
