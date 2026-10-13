@@ -12,12 +12,19 @@ use Illuminate\Support\Facades\Storage;
 
 class ProduitController extends Controller
 {
+    /** Supprime le fichier image local éventuel (les URLs Cloudinary sont ignorées). */
+    private function deleteLocalImage(?string $image): void
+    {
+        if ($image && !filter_var($image, FILTER_VALIDATE_URL)) {
+            Storage::disk('public')->delete($image);
+        }
+    }
     public function index(Request $request, Entreprise $entreprise)
     {
         $this->authorize('voirCatalogue', $entreprise);
 
         $produits = $entreprise->produits()
-            ->when($request->search, fn ($q, $s) => $q->where('nom', 'like', "%{$s}%"))
+            ->when($request->search, fn ($q, $s) => $q->whereRaw('LOWER(nom) LIKE ?', ['%' . strtolower($s) . '%']))
             ->when($request->categorie_id, fn ($q, $c) => $q->where('categorie_id', $c))
             ->with('categorie')
             ->latest()
@@ -32,6 +39,9 @@ class ProduitController extends Controller
 
         if ($request->hasFile('image')) {
             $data['image'] = $request->file('image')->store('produits', 'public');
+        } elseif (is_string($request->input('image'))) {
+            // URL Cloudinary fournie directement (upload effectué côté navigateur).
+            $data['image'] = $request->input('image');
         }
 
         $produit = $entreprise->produits()->create($data);
@@ -55,14 +65,14 @@ class ProduitController extends Controller
         unset($data['remove_image']); // pas une colonne, traité séparément ci-dessous
 
         if ($request->hasFile('image')) {
-            if ($produit->image) {
-                Storage::disk('public')->delete($produit->image);
-            }
+            $this->deleteLocalImage($produit->image);
             $data['image'] = $request->file('image')->store('produits', 'public');
+        } elseif (is_string($request->input('image'))) {
+            // URL Cloudinary fournie directement.
+            $this->deleteLocalImage($produit->image);
+            $data['image'] = $request->input('image');
         } elseif ($request->boolean('remove_image')) {
-            if ($produit->image) {
-                Storage::disk('public')->delete($produit->image);
-            }
+            $this->deleteLocalImage($produit->image);
             $data['image'] = null;
         }
 
@@ -76,9 +86,7 @@ class ProduitController extends Controller
         $this->authorize('gererCatalogue', $entreprise);
         abort_if($produit->entreprise_id !== $entreprise->id, 404);
 
-        if ($produit->image) {
-            Storage::disk('public')->delete($produit->image);
-        }
+        $this->deleteLocalImage($produit->image);
 
         $produit->delete();
 

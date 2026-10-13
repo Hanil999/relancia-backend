@@ -3,6 +3,8 @@
 namespace App\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Validation\Rule;
 
 class StoreProduitRequest extends FormRequest
 {
@@ -18,9 +20,29 @@ class StoreProduitRequest extends FormRequest
             'categorie_id' => ['nullable', 'exists:categories,id'],
             'prix' => ['required', 'integer', 'min:0'],
             'stock' => ['required', 'integer', 'min:0'],
-            'image' => ['nullable', 'image', 'max:5120'], // 5 Mo max
+            'image' => ['nullable', $this->imageRule()], // fichier ou URL Cloudinary
             'description' => ['nullable', 'string'],
             'sku' => ['nullable', 'string', 'max:100'],
         ];
+    }
+
+    protected function imageRule(): \Closure
+    {
+        return function ($attribute, $value, $fail) {
+            if ($value instanceof UploadedFile) {
+                $validator = validator(
+                    ['image' => $value],
+                    ['image' => ['image', 'max:5120']],
+                );
+                if ($validator->fails()) {
+                    $fail($validator->errors()->first('image'));
+                }
+                return;
+            }
+            if (is_string($value) && filter_var($value, FILTER_VALIDATE_URL) !== false) {
+                return;
+            }
+            $fail('L\'image doit être un fichier image (max 5 Mo) ou une URL valide.');
+        };
     }
 }

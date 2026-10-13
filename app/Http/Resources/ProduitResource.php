@@ -3,17 +3,23 @@
 namespace App\Http\Resources;
 
 use Illuminate\Http\Resources\Json\JsonResource;
-use Illuminate\Support\Facades\Storage;
 
 class ProduitResource extends JsonResource
 {
     public function toArray($request): array
     {
+        $imageUrl = null;
+        if ($this->image) {
+            $imageUrl = filter_var($this->image, FILTER_VALIDATE_URL)
+                ? $this->image // URL complète Cloudinary
+                : $request->getSchemeAndHttpHost() . '/storage/' . $this->image;
+        }
+
         return [
             'id' => $this->id,
             'nom' => $this->nom,
             'image' => $this->image,
-            'image_url' => $this->image ? $request->getSchemeAndHttpHost() . '/storage/' . $this->image : null,
+            'image_url' => $imageUrl,
             'description' => $this->description,
             'prix' => $this->prix,
             'stock' => $this->stock,
