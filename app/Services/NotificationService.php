@@ -21,7 +21,7 @@ class NotificationService
             NotificationInterne::TYPE_NOUVELLE_COMMANDE,
             "Nouvelle commande {$commande->numero}",
             "Client : {$commande->client->nom} · Montant : " . number_format((float) $commande->montant_total, 0, ',', ' ') . ' Ar',
-            ['commande_id' => $commande->id],
+            ['commande_id' => $commande->id, 'numero' => $commande->numero],
         );
     }
 
@@ -32,7 +32,7 @@ class NotificationService
             NotificationInterne::TYPE_COMMANDE_ANNULEE,
             "Commande {$commande->numero} annulée",
             'Le stock des articles concernés a été restitué automatiquement.',
-            ['commande_id' => $commande->id],
+            ['commande_id' => $commande->id, 'numero' => $commande->numero],
         );
     }
 
@@ -45,7 +45,7 @@ class NotificationService
             NotificationInterne::TYPE_PAIEMENT_RECU,
             "Paiement reçu pour {$commande->numero}",
             number_format((float) $paiement->montant, 0, ',', ' ') . ' Ar via ' . $paiement->methode,
-            ['commande_id' => $commande->id, 'paiement_id' => $paiement->id],
+            ['commande_id' => $commande->id, 'paiement_id' => $paiement->id, 'numero' => $commande->numero],
         );
     }
 
@@ -56,7 +56,7 @@ class NotificationService
             NotificationInterne::TYPE_RUPTURE_STOCK,
             "Stock faible : {$produit->nom}",
             "Il reste {$produit->stock} unité(s) en stock.",
-            ['produit_id' => $produit->id],
+            ['produit_id' => $produit->id, 'nom' => $produit->nom],
         );
     }
 
@@ -67,7 +67,7 @@ class NotificationService
             NotificationInterne::TYPE_NOUVEAU_CLIENT,
             'Nouveau client',
             "{$client->nom} vient d'être ajouté.",
-            ['client_id' => $client->id],
+            ['client_id' => $client->id, 'nom' => $client->nom],
         );
     }
 

@@ -6,13 +6,17 @@ use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Request;
 
 return Application::configure(basePath: dirname(__DIR__))
-    ->withRouting(
+->withRouting(
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
-        channels: __DIR__.'/../routes/channels.php',
         health: '/up',
     )
+    // Auth du canal privé Reverb : le frontend envoie un bearer token Sanctum,
+    // pas de session web. => Broadcast::routes(['middleware' => 'auth:sanctum'])
+    ->withBroadcasting(__DIR__.'/../routes/channels.php', [
+        'middleware' => ['auth:sanctum'],
+    ])
     // bootstrap/app.php
 ->withMiddleware(function (Middleware $middleware) {
     // HandleCors doit être global pour intercepter les requêtes preflight OPTIONS,
