@@ -3,11 +3,13 @@
 namespace App\Services;
 
 use App\Models\Commande;
+use App\Models\MessageCanal;
 use App\Models\Paiement;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Log;
-use Stripe\Exception\SignatureVerificationException;
+use Stripe\Checkout\Session;
 use Stripe\Exception\ApiErrorException;
+use Stripe\Exception\SignatureVerificationException;
 use Stripe\StripeClient;
 use Stripe\Webhook;
 
@@ -34,7 +36,7 @@ class StripeService
     {
         $base = rtrim(config('app.frontend_url', config('app.url')), '/');
 
-        return $base . $path;
+        return $base.$path;
     }
 
     /**
@@ -42,7 +44,7 @@ class StripeService
      */
     private function publicUrl(string $path = ''): string
     {
-        return rtrim(config('app.url'), '/') . $path;
+        return rtrim(config('app.url'), '/').$path;
     }
 
     /**
@@ -51,6 +53,16 @@ class StripeService
     public function tauxConversion(): float
     {
         return (float) config('services.stripe.taux_conversion', 4900);
+    }
+
+    /**
+     * Montant minimal accepte par Stripe (0,50 EUR). En dessous, l'API refuse
+     * la session. On leve une exception explicite plutot que de laisser
+     * Stripe repondre par une erreur opaque.
+     */
+    public function montantMinimum(): float
+    {
+        return 0.50 * $this->tauxConversion();
     }
 
     /**
@@ -64,6 +76,14 @@ class StripeService
     {
         if (! $this->estConfigure()) {
             throw new \RuntimeException('Paiement par carte non disponible.');
+        }
+
+        if ($montant < $this->montantMinimum()) {
+            throw new \RuntimeException(sprintf(
+                'Montant trop faible pour Stripe : minimum %.0f Ar (0,50 EUR), demandé %.0f Ar.',
+                $this->montantMinimum(),
+                $montant,
+            ));
         }
 
         // Conversion Ariary → devise Stripe (EUR) : le montant est stocké en Ar.
@@ -152,12 +172,14 @@ class StripeService
 
         if (! $commandeId || ! $sessionId) {
             Log::warning('Stripe : session sans commande_id ou sans id', ['session' => $session]);
+
             return null;
         }
 
         $commande = Commande::find((int) $commandeId);
         if (! $commande) {
             Log::warning('Stripe : commande introuvable', ['commande_id' => $commandeId]);
+
             return null;
         }
 
@@ -254,7 +276,7 @@ class StripeService
     /**
      * Récupère une Checkout Session Stripe côté serveur (après le retour du client).
      */
-    public function retrouverSession(string $sessionId): \Stripe\Checkout\Session
+    public function retrouverSession(string $sessionId): Session
     {
         if (! $this->estConfigure()) {
             throw new \RuntimeException('Paiement par carte non disponible.');
@@ -273,7 +295,7 @@ class StripeService
         return round($montantDevise * $this->tauxConversion(), 2);
     }
 
-    private function notifierClient(Commande $commande, \App\Models\Paiement $paiement): void
+    private function notifierClient(Commande $commande, Paiement $paiement): void
     {
         $canal = $commande->entreprise->canalTelegram();
 
@@ -287,7 +309,7 @@ class StripeService
             ?? (string) $commande->client?->identifiant_externe;
 
         if (! $chatId) {
-            $dernierMessage = \App\Models\MessageCanal::where('entreprise_id', $commande->entreprise_id)
+            $dernierMessage = MessageCanal::where('entreprise_id', $commande->entreprise_id)
                 ->where('client_id', $commande->client_id)
                 ->where('canal', 'Telegram')
                 ->latest()
@@ -301,14 +323,15 @@ class StripeService
 
         $montant = number_format((float) $paiement->montant, 0, ',', ' ');
         $reste = number_format((float) $commande->reste_a_payer, 0, ',', ' ');
+        $items = $commande->items->map(fn ($i) => "{$i->quantite}x {$i->produit_nom}")->implode(', ');
 
         if (in_array($commande->statut, ['livree', 'expediee'], true)) {
-            $texte = "Paiement de {$montant} Ar bien reçu pour la commande {$commande->numero}."
-                . "\nMerci, votre commande est intégralement soldée !";
+            $texte = "Paiement de {$montant} Ar bien reçu pour votre commande de {$items}."
+                ."\nMerci, votre commande est intégralement soldée !";
         } else {
             $texte = "Paiement reçu !\n"
-                . "Votre commande {$commande->numero} sera livrée dans quelques heures.\n\n"
-                . "Montant réglé : {$montant} Ar";
+                ."Votre commande de {$items} sera livrée dans quelques heures.\n\n"
+                ."Montant réglé : {$montant} Ar";
 
             if ((float) $commande->reste_a_payer > 0) {
                 $texte .= "\nIl reste encore {$reste} Ar à régler.";
@@ -320,7 +343,7 @@ class StripeService
         try {
             app(TelegramService::class)->envoyerMessage($canal, $chatId, $texte);
 
-            \App\Models\MessageCanal::create([
+            MessageCanal::create([
                 'entreprise_id' => $commande->entreprise_id,
                 'client_id' => $commande->client_id,
                 'canal' => 'Telegram',
