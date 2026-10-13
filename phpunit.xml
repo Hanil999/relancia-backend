@@ -32,5 +32,7 @@
         <env name="PULSE_ENABLED" value="false"/>
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <!-- Vide exprès : aucun test ne doit appeler d'API IA réelle. -->
+        <env name="IA_API_KEY" value=""/>
     </php>
 </phpunit>

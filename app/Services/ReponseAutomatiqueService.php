@@ -7,6 +7,7 @@ use App\Models\Commande;
 use App\Models\Entreprise;
 use App\Models\Produit;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Log;
 
 /**
  * Moteur de réponse automatique aux messages clients (Telegram, WhatsApp, …) :
@@ -22,13 +23,16 @@ class ReponseAutomatiqueService
         private readonly CommandeParserService $parser,
         private readonly CommandeService $commandes,
         private readonly StripeService $stripe,
-    ) {
-    }
+        private readonly GoalpayService $goalpay,
+        private readonly ReponseIaService $ia,
+    ) {}
 
     /**
      * @return array{
      *     message: string,
      *     suggestions: array<int, string>,
+     *     lien_paiement: ?string,
+     *     lien_mobile_money: ?string,
      *     produits: array<int, array{id: int, nom: string, prix: float, stock: int}>|null,
      *     commande: array{numero: string, montant_total: float, statut: string, statut_label: string, facture_numero: ?string}|null,
      *     ruptures: array<int, string>,
@@ -54,11 +58,12 @@ class ReponseAutomatiqueService
 
         // --- 1. Intentions spécifiques AVANT le filtrage chat ---
         // (ex: "je n'arrive pas à payer" contient "pas" mais reste une demande de paiement)
-        if ($this->contient($texte, ['annuler', 'cancel', 'supprimer', 'effacer'])) {
+        if ($this->contient($texte, ['annuler', 'annule', 'annules', 'annulation', 'cancel', 'supprimer', 'supprime', 'supprimez', 'effacer'])) {
             return [...$base, ...$this->traiterAnnulation($entreprise, $client)];
         }
 
-        if ($this->contient($texte, ['modifier', 'changer', 'remplacer'])) {
+        // « modifie », « changes » … autant de façons de demander un changement.
+        if ($this->contient($texte, ['modifier', 'modifie', 'modifies', 'modification', 'changer', 'changes', 'changez', 'changé', 'remplacer'])) {
             return [...$base, ...$this->traiterModification($entreprise, $client, $message, $canal)];
         }
 
@@ -111,8 +116,39 @@ class ReponseAutomatiqueService
             return [...$base, 'message' => "Je n'ai pas reconnu le produit demandé. Voici notre catalogue :", ...$this->repondreCatalogue($produits)];
         }
 
-        // --- 5. Fallback : question / aide ---
-        return [...$base, ...$this->traiterQuestion($message, $produits)];
+        // --- 5. Fallback : IA pour la conversation, regles en secours ---
+        return [...$base, ...$this->repondreConversationnel($entreprise, $client, $message, $canal, $produits)];
+    }
+
+    /**
+     * Tente une réponse IA, et retombe sur les règles si le modèle est
+     * indisponible ou si sa réponse est rejetée par le garde-fou commercial.
+     *
+     * Les intentions transactionnelles n'arrivent jamais ici : elles sont
+     * traitées plus haut, de façon déterministe.
+     */
+    private function repondreConversationnel(
+        Entreprise $entreprise,
+        Client $client,
+        string $message,
+        string $canal,
+        Collection $produits,
+    ): array {
+        try {
+            $ia = $this->ia->repondre($entreprise, $client, $message, $produits, $canal);
+        } catch (\Throwable $e) {
+            Log::warning('IA : erreur inattendue, repli sur les regles', ['erreur' => $e->getMessage()]);
+            $ia = null;
+        }
+
+        if ($ia !== null) {
+            return [
+                'message' => $ia['message'],
+                'suggestions' => ['Voir les produits', 'Suivre ma commande'],
+            ];
+        }
+
+        return $this->traiterQuestion($message, $produits);
     }
 
     private function traiterAcquiescement(): array
@@ -143,8 +179,8 @@ class ReponseAutomatiqueService
             $produits = $entreprise->produits()->get();
 
             return [
-                'message' => "Désolé, certains produits ne sont pas disponibles en quantité suffisante : "
-                    . implode(', ', $ruptures) . '.',
+                'message' => 'Désolé, certains produits ne sont pas disponibles en quantité suffisante : '
+                    .implode(', ', $ruptures).'.',
                 'suggestions' => $this->suggestions($produits),
                 'ruptures' => $ruptures,
             ];
@@ -153,17 +189,17 @@ class ReponseAutomatiqueService
         $commande = $this->commandes->creerDepuisMessage($entreprise, $client, $message, $canal)['commande'];
 
         $lignes = $commande->items->map(function ($item) {
-            return $item->quantite . ' ' . $item->produit_nom;
+            return $item->quantite.' '.$item->produit_nom;
         });
 
         $count = $lignes->count();
         if ($count === 1) {
             $listeProduits = $lignes->first();
         } elseif ($count === 2) {
-            $listeProduits = $lignes->first() . ' et ' . $lignes->last();
+            $listeProduits = $lignes->first().' et '.$lignes->last();
         } else {
             $dernier = $lignes->pop();
-            $listeProduits = $lignes->implode(', ') . ' et ' . $dernier;
+            $listeProduits = $lignes->implode(', ').' et '.$dernier;
         }
 
         $montantTotal = number_format((float) $commande->montant_total, 0, ',', ' ');
@@ -172,21 +208,25 @@ class ReponseAutomatiqueService
         $numeroTelephone = $entreprise->telephone ?: '034XXXXXXXX';
 
         $texte = "Votre commande de {$listeProduits} est bien enregistrée !\n"
-            . "Montant total : {$montantTotal} Ar\n"
-            . "Acompte demandé : {$montantAcompte} Ar ({$pct}%)\n\n"
-            . "Pour confirmer, payez votre acompte via :\n";
+            ."Montant total : {$montantTotal} Ar\n"
+            ."Acompte demandé : {$montantAcompte} Ar ({$pct}%)\n\n"
+            ."Pour confirmer, payez votre acompte via :\n";
 
-        $lienPaiement = $this->lienPaiementStripe($commande, (float) $commande->montant_total * $pct / 100);
-        $texte .= $this->ligneCarte($lienPaiement, $canal);
+        $lienStripe = $this->lienPaiementStripe($commande, (float) $commande->montant_total * $pct / 100);
+        $texte .= $this->ligneCarte($lienStripe, $canal);
+
+        $lienGoalpay = $this->lienPaiementGoalpay($commande, (float) $commande->montant_total * $pct / 100);
+        $texte .= $this->ligneMobileMoney($lienGoalpay, $canal);
 
         $texte .= "- Mobile Money (MVola / Airtel Money) au {$numeroTelephone}\n"
-            . "- En boutique\n\n"
-            . "Envoyez la preuve de paiement ici ou informez le vendeur.\n"
-            . "Merci !";
+            ."- En boutique\n\n"
+            ."Envoyez la preuve de paiement ici ou informez le vendeur.\n"
+            .'Merci !';
 
         return [
             'message' => trim($texte),
-            'lien_paiement' => $lienPaiement,
+            'lien_paiement' => $lienStripe,
+            'lien_mobile_money' => $lienGoalpay,
             'suggestions' => $this->suggestions($entreprise->produits()->get()),
             'commande' => [
                 'numero' => $commande->numero,
@@ -223,8 +263,8 @@ class ReponseAutomatiqueService
 
                 return [
                     'message' => "Le prix de {$produit->nom} est de "
-                        . number_format((float) $produit->prix, 0, ',', ' ') . ' Ar'
-                        . ($produit->stock > 0 ? " (stock : {$produit->stock})." : '.'),
+                        .number_format((float) $produit->prix, 0, ',', ' ').' Ar'
+                        .($produit->stock > 0 ? " (stock : {$produit->stock})." : '.'),
                     'suggestions' => $this->suggestions($produits),
                     'produits' => [$this->formatProduit($produit)],
                 ];
@@ -236,7 +276,7 @@ class ReponseAutomatiqueService
         // 3. Salutations
         if ($this->contient($texte, ['bonjour', 'salut', 'bonsoir', 'hello', 'coucou', 'slt', 'cc', 'bienvenue', 'bonne nuit'])) {
             return [
-                'message' => "Bonjour ! 👋 Bienvenue chez nous. Je peux vous montrer nos produits, vous donner les prix ou enregistrer votre commande. Que souhaitez-vous ?",
+                'message' => 'Bonjour ! 👋 Bienvenue chez nous. Je peux vous montrer nos produits, vous donner les prix ou enregistrer votre commande. Que souhaitez-vous ?',
                 'suggestions' => $this->suggestions($produits),
             ];
         }
@@ -290,7 +330,7 @@ class ReponseAutomatiqueService
         }
 
         $lignes = $produits->take(10)->map(
-            fn (Produit $p) => '• ' . $p->nom . ' — ' . number_format((float) $p->prix, 0, ',', ' ') . ' Ar'
+            fn (Produit $p) => '• '.$p->nom.' — '.number_format((float) $p->prix, 0, ',', ' ').' Ar'
         )->join("\n");
 
         return [
@@ -314,7 +354,7 @@ class ReponseAutomatiqueService
         }
 
         $lignes = $produits->take(10)->map(
-            fn (Produit $p) => '• ' . $p->nom . ' : ' . number_format((float) $p->prix, 0, ',', ' ') . ' Ar'
+            fn (Produit $p) => '• '.$p->nom.' : '.number_format((float) $p->prix, 0, ',', ' ').' Ar'
         )->join("\n");
 
         return [
@@ -385,6 +425,18 @@ class ReponseAutomatiqueService
         ];
     }
 
+    /**
+     * Liste les produits d'une commande pour les messages destinés au client
+     * (« 2x Bracelet, 1x Collier »). Le numéro de commande ne doit jamais être
+     * communiqué au client : on ne montre que les produits commandés.
+     */
+    private function listerItems(Commande $commande): string
+    {
+        return $commande->items
+            ->map(fn ($item) => $item->quantite.'x '.$item->produit_nom)
+            ->implode(', ');
+    }
+
     private function traiterPaiement(Client $client, string $canal): array
     {
         $derniereCommande = $client->commandes()->latest()->first();
@@ -398,37 +450,42 @@ class ReponseAutomatiqueService
 
         $statut = $derniereCommande->statut_label;
         $reste = (float) $derniereCommande->reste_a_payer;
+        $listeProduits = $this->listerItems($derniereCommande);
 
         if ($derniereCommande->statut === 'livree') {
             return [
-                'message' => "Votre commande {$derniereCommande->numero} est déjà livrée. Merci pour votre confiance !",
+                'message' => "Votre commande de {$listeProduits} est déjà livrée. Merci pour votre confiance !",
                 'suggestions' => ['Voir les produits'],
             ];
         }
 
         if ($derniereCommande->statut === 'annulee') {
             return [
-                'message' => "Votre commande {$derniereCommande->numero} a été annulée. Vous pouvez en passer une nouvelle.",
+                'message' => "Votre commande de {$listeProduits} a été annulée. Vous pouvez en passer une nouvelle.",
                 'suggestions' => ['Voir les produits', 'Afficher les prix'],
             ];
         }
 
         $montant = number_format($reste, 0, ',', ' ');
-        $texte = "Commande {$derniereCommande->numero} — {$statut}\n"
-            . "Reste à payer : {$montant} Ar\n\n"
-            . "Modes de paiement acceptés :\n";
+        $texte = "Votre commande : {$listeProduits}\n"
+            ."Statut : {$statut}\n"
+            ."Reste à payer : {$montant} Ar\n\n"
+            ."Modes de paiement acceptés :\n";
 
-        $lienPaiement = $reste > 0 ? $this->lienPaiementStripe($derniereCommande, $reste) : null;
-        $texte .= $this->ligneCarte($lienPaiement, $canal);
+        $lienStripe = $reste > 0 ? $this->lienPaiementStripe($derniereCommande, $reste) : null;
+        $texte .= $this->ligneCarte($lienStripe, $canal);
 
-        $texte .= "• Mobile Money (MVola, Airtel Money, Orange Money)\n"
-            . "• Virement bancaire\n"
-            . "• Paiement à la livraison\n\n"
-            . "Un commercial vous contactera pour finaliser.";
+        $lienGoalpay = $reste > 0 ? $this->lienPaiementGoalpay($derniereCommande, $reste) : null;
+        $texte .= $this->ligneMobileMoney($lienGoalpay, $canal);
+
+        $texte .= "• Virement bancaire\n"
+            ."• Paiement à la livraison\n\n"
+            .'Un commercial vous contactera pour finaliser.';
 
         return [
             'message' => $texte,
-            'lien_paiement' => $lienPaiement,
+            'lien_paiement' => $lienStripe,
+            'lien_mobile_money' => $lienGoalpay,
             'suggestions' => ['Voir les produits', 'Suivre ma commande'],
         ];
     }
@@ -441,7 +498,36 @@ class ReponseAutomatiqueService
     {
         try {
             return $this->stripe->creerSessionCheckout($commande, $montant)['url'];
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::warning('Lien Stripe indisponible, bouton carte omis', [
+                'commande_id' => $commande->id,
+                'montant' => $montant,
+                'erreur' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Génère le lien de paiement GoalPay (Mobile Money — Ariary) si le service
+     * est configuré. Retourne null si GoalPay n'est pas disponible.
+     */
+    private function lienPaiementGoalpay(Commande $commande, float $montant): ?string
+    {
+        try {
+            if (! $this->goalpay->estConfigure()) {
+                return null;
+            }
+
+            return $this->goalpay->creerSessionCheckout($commande, $montant)['url'];
+        } catch (\Throwable $e) {
+            Log::warning('Lien GoalPay indisponible, bouton Mobile Money omis', [
+                'commande_id' => $commande->id,
+                'montant' => $montant,
+                'erreur' => $e->getMessage(),
+            ]);
+
             return null;
         }
     }
@@ -461,6 +547,20 @@ class ReponseAutomatiqueService
             : "• 💳 Carte bancaire (en ligne) : {$lien}\n";
     }
 
+    /**
+     * Idem pour la ligne « Mobile Money » (bouton « 📱 Payer par Mobile Money »).
+     */
+    private function ligneMobileMoney(?string $lien, string $canal): string
+    {
+        if (! $lien) {
+            return '';
+        }
+
+        return in_array($canal, ['Telegram', 'WhatsApp', 'Messenger', 'Instagram'])
+            ? "• 📱 Mobile Money (MVola, Airtel Money, Orange Money) : touchez le bouton « 📱 Payer par Mobile Money » ci-dessous\n"
+            : "• 📱 Mobile Money (MVola, Airtel Money, Orange Money) : {$lien}\n";
+    }
+
     private function traiterLivraison(Client $client): array
     {
         $derniereCommande = $client->commandes()->latest()->first();
@@ -475,16 +575,18 @@ class ReponseAutomatiqueService
         $statut = $derniereCommande->statut_label;
 
         $suivi = match ($derniereCommande->statut) {
-            'en_attente' => "Votre commande est en attente de confirmation. Elle sera préparée sous 24-48h.",
-            'confirmee' => "Votre commande est confirmée et en cours de préparation. Expédition sous 24-48h.",
-            'expediee' => "Votre commande est expédiée ! Livraison prévue sous 1-3 jours ouvrés.",
-            'livree' => "Votre commande a été livrée. Nous espérons que vous êtes satisfait !",
-            'annulee' => "Votre commande a été annulée.",
-            default => "Statut inconnu.",
+            'en_attente' => 'Votre commande est en attente de confirmation. Elle sera préparée sous 24-48h.',
+            'confirmee' => 'Votre commande est confirmée et en cours de préparation. Expédition sous 24-48h.',
+            'expediee' => 'Votre commande est expédiée ! Livraison prévue sous 1-3 jours ouvrés.',
+            'livree' => 'Votre commande a été livrée. Nous espérons que vous êtes satisfait !',
+            'annulee' => 'Votre commande a été annulée.',
+            default => 'Statut inconnu.',
         };
 
+        $listeProduits = $this->listerItems($derniereCommande);
+
         return [
-            'message' => "Commande {$derniereCommande->numero} — {$statut}\n\n{$suivi}\n\nPour plus de détails, contactez directement le vendeur.",
+            'message' => "Votre commande : {$listeProduits}\nStatut : {$statut}\n\n{$suivi}\n\nPour plus de détails, contactez directement le vendeur.",
             'suggestions' => ['Payer ma commande', 'Voir les produits'],
         ];
     }
@@ -504,7 +606,7 @@ class ReponseAutomatiqueService
             ];
         }
 
-        $lignes = $commande->items->map(fn ($item) => $item->quantite . ' ' . $item->produit_nom)->implode(', ');
+        $lignes = $commande->items->map(fn ($item) => $item->quantite.' '.$item->produit_nom)->implode(', ');
 
         app(CommandeService::class)->changerStatut($commande, 'annulee');
 
@@ -518,93 +620,88 @@ class ReponseAutomatiqueService
     {
         $commande = $client->commandes()
             ->where('entreprise_id', $entreprise->id)
-            ->where('statut', 'en_attente')
+            ->whereIn('statut', ['en_attente', 'confirmee'])
             ->latest()
             ->first();
 
         if (! $commande) {
-            $aCommande = $client->commandes()
+            $derniere = $client->commandes()
                 ->where('entreprise_id', $entreprise->id)
                 ->latest()
                 ->first();
 
-            if ($aCommande && in_array($aCommande->statut, ['confirmee', 'expediee', 'livree'])) {
+            if ($derniere && $derniere->statut !== 'annulee') {
                 return [
-                    'message' => "Votre commande {$aCommande->numero} est déjà {$aCommande->statut_label}. Elle ne peut plus être modifiée.",
+                    'message' => "Votre commande est déjà {$derniere->statut_label}. Elle ne peut plus être modifiée.",
                     'suggestions' => ['Voir les produits'],
                 ];
             }
 
             return [
-                'message' => "Vous n'avez pas de commande en attente a modifier.\n\nPour changer une commande, dites-moi les nouveaux produits que vous souhaitez.",
+                'message' => "Vous n'avez pas de commande en cours à modifier.\n\nPour changer une commande, dites-moi les nouveaux produits que vous souhaitez.",
                 'suggestions' => ['Voir les produits', 'Afficher les prix'],
             ];
         }
 
-        $ancienMontant = number_format((float) $commande->montant_total, 0, ',', ' ');
-
         $analyse = $this->parser->parser($message, $entreprise->produits()->get());
 
-        if (! empty($analyse['reconnus'])) {
-            $ruptures = [];
-            foreach ($analyse['reconnus'] as $ligne) {
-                $produit = $ligne['produit'];
-                if ($produit->stock < $ligne['quantite']) {
-                    $ruptures[] = "{$produit->nom} (stock : {$produit->stock})";
-                }
-            }
-
-            if (! empty($ruptures)) {
-                return [
-                    'message' => "Certains produits ne sont pas disponibles en quantité suffisante : "
-                        . implode(', ', $ruptures) . ".\n\nVotre commande actuelle est conservée.",
-                    'suggestions' => ['Voir les produits'],
-                    'ruptures' => $ruptures,
-                ];
-            }
-
-            app(CommandeService::class)->changerStatut($commande, 'annulee');
-
-            $nouvelleCommande = $this->commandes->creerDepuisMessage($entreprise, $client, $message, $canal)['commande'];
-
-            $lignes = $nouvelleCommande->items->map(fn ($item) => $item->quantite . ' ' . $item->produit_nom);
-            $count = $lignes->count();
-            if ($count === 1) {
-                $listeProduits = $lignes->first();
-            } elseif ($count === 2) {
-                $listeProduits = $lignes->first() . ' et ' . $lignes->last();
-            } else {
-                $dernier = $lignes->pop();
-                $listeProduits = $lignes->implode(', ') . ' et ' . $dernier;
-            }
-
-            $nouveauMontant = number_format((float) $nouvelleCommande->montant_total, 0, ',', ' ');
+        if (empty($analyse['reconnus'])) {
+            $ancienLignes = $this->listerItems($commande);
+            $ancienMontant = number_format((float) $commande->montant_total, 0, ',', ' ');
 
             return [
-                'message' => "Votre commande a bien été modifiée !\n"
-                    . "Ancienne commande ({$ancienMontant} Ar) : annulée.\n"
-                    . "Nouvelle commande ({$nouveauMontant} Ar) : {$listeProduits}.\n\n"
-                    . "On va la préparer et vous recontacter pour la livraison. Merci !",
-                'suggestions' => $this->suggestions($entreprise->produits()->get()),
-                'commande' => [
-                    'numero' => $nouvelleCommande->numero,
-                    'montant_total' => (float) $nouvelleCommande->montant_total,
-                    'statut' => $nouvelleCommande->statut,
-                    'statut_label' => $nouvelleCommande->statut_label,
-                    'facture_numero' => null,
-                ],
-                'ruptures' => [],
+                'message' => "Votre commande actuelle ({$ancienMontant} Ar) : {$ancienLignes}\n\n"
+                    ."Dites-moi les nouveaux produits que vous souhaitez. Par exemple :\n"
+                    ."- \"modifier 3 cheese burger\"\n"
+                    .'- "changer pour 2 pizza reine"',
+                'suggestions' => ['Voir les produits', 'Afficher les prix', 'Annuler ma commande'],
             ];
         }
 
-        $ancienLignes = $commande->items->map(fn ($item) => $item->quantite . ' ' . $item->produit_nom)->implode(', ');
+        $ruptures = [];
+        foreach ($analyse['reconnus'] as $ligne) {
+            $produit = $ligne['produit'];
+            if ($produit->stock < $ligne['quantite']) {
+                $ruptures[] = "{$produit->nom} (stock : {$produit->stock})";
+            }
+        }
+
+        if (! empty($ruptures)) {
+            return [
+                'message' => 'Certains produits ne sont pas disponibles en quantité suffisante : '
+                    .implode(', ', $ruptures).".\n\nVotre commande actuelle est conservée.",
+                'suggestions' => ['Voir les produits'],
+                'ruptures' => $ruptures,
+            ];
+        }
+
+        // On modifie la commande existante (CommandeService::modifier ajuste le
+        // stock au net si elle était déjà confirmée). Pas de nouvelle commande :
+        // le client garde la même commande, on change simplement son contenu.
+        $lignes = array_values(array_map(
+            fn ($ligne) => ['produit_id' => $ligne['produit']->id, 'quantite' => $ligne['quantite']],
+            $analyse['reconnus'],
+        ));
+
+        $this->commandes->modifier($commande, $client, $lignes, $canal);
+
+        $commande = $commande->fresh(['items']);
+        $nouveauLignes = $this->listerItems($commande);
+        $nouveauMontant = number_format((float) $commande->montant_total, 0, ',', ' ');
 
         return [
-            'message' => "Votre commande actuelle ({$ancienMontant} Ar) : {$ancienLignes}\n\n"
-                . "Dites-moi les nouveaux produits que vous souhaitez. Par exemple :\n"
-                . "- \"modifier 3 cheese burger\"\n"
-                . "- \"changer pour 2 pizza reine\"",
-            'suggestions' => ['Voir les produits', 'Afficher les prix', 'Annuler ma commande'],
+            'message' => "Votre commande a bien été modifiée !\n"
+                ."Nouveau contenu ({$nouveauMontant} Ar) : {$nouveauLignes}.\n\n"
+                .'On va la préparer et vous recontacter pour la livraison. Merci !',
+            'suggestions' => $this->suggestions($entreprise->produits()->get()),
+            'commande' => [
+                'numero' => $commande->numero,
+                'montant_total' => (float) $commande->montant_total,
+                'statut' => $commande->statut,
+                'statut_label' => $commande->statut_label,
+                'facture_numero' => null,
+            ],
+            'ruptures' => [],
         ];
     }
 }
